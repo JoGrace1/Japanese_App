@@ -1,20 +1,923 @@
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  DECORATIONS,
+  HIRAGANA,
+  INTRODUCTORY_KANJI,
+  KATAKANA,
+  STORIES,
+  STUDY_CARDS,
+  VOCABULARY,
+} from './src/content/beginner';
+import {
+  Board,
+  createBoard,
+  createGameLevel,
+  playMove,
+  Position,
+} from './src/game/kanaCrush';
+import { isDue, localDateKey } from './src/review/scheduling';
+import { useProgress } from './src/storage/useProgress';
+import { ReviewRating, Story } from './src/types';
 
-export default function App() {
+export type Section = 'home' | 'game' | 'cards' | 'stories' | 'garden' | 'progress';
+type CardCategory = 'Due' | 'New' | 'Learned';
+
+const COLORS = {
+  ink: '#44363D',
+  muted: '#8C7C81',
+  pink: '#D98091',
+  pinkLight: '#F8E6E9',
+  cream: '#FFF9F1',
+  paper: '#FFFFFF',
+  green: '#668B72',
+  greenLight: '#E7F0E8',
+  gold: '#D2A34C',
+  border: '#F0E5DF',
+  lavender: '#EEE8F5',
+};
+
+function todayCount(progress: ReturnType<typeof useProgress>['progress']): number {
+  return Object.values(progress.reviews).filter((review) => isDue(review)).length;
+}
+
+function currentStreak(dates: string[]): number {
+  const active = new Set(dates);
+  const cursor = new Date();
+  if (!active.has(localDateKey(cursor))) cursor.setDate(cursor.getDate() - 1);
+  let streak = 0;
+  while (active.has(localDateKey(cursor))) {
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return streak;
+}
+
+function chooseSessionCards(
+  category: CardCategory,
+  progress: ReturnType<typeof useProgress>['progress'],
+): string[] {
+  const cards = STUDY_CARDS.filter((card) => {
+    const record = progress.reviews[card.id];
+    if (category === 'Due') return isDue(record);
+    if (category === 'New') return !record;
+    return Boolean(record && record.successes >= 3);
+  });
+  return cards.slice(0, 8).map((card) => card.id);
+}
+
+export function LoadingScreen() {
   return (
-    <View style={styles.container}>
-      <Text>Open up App.tsx to start working on your app!</Text>
-      <StatusBar style="auto" />
+    <SafeAreaView style={styles.loading}>
+      <StatusBar style="dark" />
+      <ActivityIndicator size="large" color={COLORS.pink} />
+      <Text style={styles.loadingText}>Opening your garden…</Text>
+    </SafeAreaView>
+  );
+}
+
+function ScreenTitle({ eyebrow, title, subtitle }: { eyebrow: string; title: string; subtitle?: string }) {
+  return (
+    <View style={styles.screenTitle}>
+      <Text style={styles.eyebrow}>{eyebrow.toUpperCase()}</Text>
+      <Text style={styles.title}>{title}</Text>
+      {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
     </View>
   );
 }
 
+function ProgressBar({ value, maximum, color = COLORS.pink }: { value: number; maximum: number; color?: string }) {
+  const width = `${Math.min(100, Math.max(0, maximum ? (value / maximum) * 100 : 0))}%` as `${number}%`;
+  return (
+    <View style={styles.progressTrack}>
+      <View style={[styles.progressFill, { width, backgroundColor: color }]} />
+    </View>
+  );
+}
+
+export function HomeScreen({
+  progress,
+  onNavigate,
+}: {
+  progress: ReturnType<typeof useProgress>['progress'];
+  onNavigate: (section: Section) => void;
+}) {
+  const due = todayCount(progress);
+  const introduced = Object.keys(progress.reviews).length;
+  const learned = Object.values(progress.reviews).filter((item) => item.successes >= 3).length;
+  const streak = currentStreak(progress.dailyActivity.map((activity) => activity.date));
+  const hiraganaIntroduced = HIRAGANA.filter((item) => progress.reviews[item.id]).length;
+  const learningLevel = Math.min(Math.floor(hiraganaIntroduced / 5) + 1, 5);
+  const todayActivity = progress.dailyActivity.find((activity) => activity.date === localDateKey());
+
+  return (
+    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <View style={styles.homeTop}>
+        <View>
+          <Text style={styles.eyebrow}>SAKURA GARDEN</Text>
+          <Text style={styles.homeGreeting}>おかえりなさい</Text>
+          <Text style={styles.subtitle}>Welcome back, little learner</Text>
+        </View>
+        <View style={styles.streakPill}><Text style={styles.streakText}>🔥 {streak} day{streak === 1 ? '' : 's'}</Text></View>
+      </View>
+
+      <View style={styles.heroCard}>
+        <View style={styles.heroTop}>
+          <View>
+            <Text style={styles.heroKicker}>YOUR LEARNING JOURNEY</Text>
+            <Text style={styles.heroHeading}>Hiragana garden</Text>
+            <Text style={styles.heroCopy}>Level {learningLevel} · A1 foundations</Text>
+          </View>
+          <Text style={styles.heroFlower}>🌸</Text>
+        </View>
+        <View style={styles.heroStats}>
+          <View>
+            <Text style={styles.heroStat}>{learned}<Text style={styles.heroStatSmall}> / {HIRAGANA.length + KATAKANA.length + VOCABULARY.length}</Text></Text>
+            <Text style={styles.heroStatLabel}>items mastered · {introduced} introduced</Text>
+          </View>
+          <View style={styles.heroStatDivider} />
+          <View style={styles.heroDue}>
+            <Text style={styles.heroStat}>{due}</Text>
+            <Text style={styles.heroStatLabel}>cards due today</Text>
+          </View>
+        </View>
+        <ProgressBar value={learned} maximum={HIRAGANA.length + VOCABULARY.length} color="#FFF3D8" />
+        <View style={styles.goalRow}>
+          <Text style={styles.heroStatLabel}>Daily goal · {progress.dailyGoal} cards</Text>
+          <Text style={styles.heroStatLabel}>{Math.min(todayActivity?.successfulReviews ?? 0, progress.dailyGoal)}/{progress.dailyGoal}</Text>
+        </View>
+      </View>
+
+      <SectionHeading title="Choose your adventure" helper="A little practice goes a long way" />
+      <View style={styles.quickGrid}>
+        <QuickLink emoji="🎮" title="Kana Crush" detail="Match & learn" color={COLORS.pinkLight} onPress={() => onNavigate('game')} />
+        <QuickLink emoji="🗂️" title="Flashcards" detail={`${due} due today`} color={COLORS.lavender} onPress={() => onNavigate('cards')} />
+        <QuickLink emoji="📖" title="Stories" detail="Read something lovely" color="#F8EFDA" onPress={() => onNavigate('stories')} />
+        <QuickLink emoji="🌿" title="My Garden" detail={`${progress.petals} petals`} color={COLORS.greenLight} onPress={() => onNavigate('garden')} />
+      </View>
+
+      <SectionHeading title="A peek at your garden" helper="Your learning makes it bloom" />
+      <Pressable style={styles.gardenPreview} onPress={() => onNavigate('garden')}>
+        <Text style={styles.gardenCloud}>☁️</Text>
+        <View style={styles.gardenScene}>
+          <Text style={styles.sceneTree}>🌸</Text>
+          <Text style={styles.sceneHouse}>🏠</Text>
+          <Text style={styles.scenePlant}>🎋</Text>
+          <Text style={styles.sceneLantern}>🏮</Text>
+        </View>
+        <View style={styles.gardenCaption}>
+          <Text style={styles.gardenCaptionTitle}>Your peaceful place</Text>
+          <Text style={styles.gardenCaptionText}>Visit the garden →</Text>
+        </View>
+      </Pressable>
+    </ScrollView>
+  );
+}
+
+function QuickLink({
+  emoji, title, detail, color, onPress,
+}: { emoji: string; title: string; detail: string; color: string; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.quickCard, { backgroundColor: color }, pressed && styles.pressed]}>
+      <Text style={styles.quickEmoji}>{emoji}</Text>
+      <Text style={styles.quickTitle}>{title}</Text>
+      <Text style={styles.quickDetail}>{detail}</Text>
+    </Pressable>
+  );
+}
+
+function SectionHeading({ title, helper }: { title: string; helper?: string }) {
+  return (
+    <View style={styles.sectionHeading}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {helper ? <Text style={styles.sectionHelper}>{helper}</Text> : null}
+    </View>
+  );
+}
+
+export function GameScreen({
+  completedLevels,
+  awardActivity,
+  onHome,
+}: {
+  completedLevels: number;
+  awardActivity: (petals: number, level?: number) => void;
+  onHome: () => void;
+}) {
+  const [level, setLevel] = useState(completedLevels + 1);
+  const [board, setBoard] = useState<Board>(() => createBoard(Math.random, createGameLevel(completedLevels + 1).characters));
+  const [selected, setSelected] = useState<Position | null>(null);
+  const [score, setScore] = useState(0);
+  const [moves, setMoves] = useState(() => createGameLevel(completedLevels + 1).moveLimit);
+  const [validMoves, setValidMoves] = useState(0);
+  const [finished, setFinished] = useState(false);
+  const [quizAnswer, setQuizAnswer] = useState<string | null>(null);
+  const [quizShown, setQuizShown] = useState(false);
+  const gameLevel = useMemo(() => createGameLevel(level), [level]);
+  const characters = gameLevel.characters;
+  const promptIndex = (level + 2) % characters.length;
+  const choices = [0, 1, 3].map((offset) => HIRAGANA.find(
+    (kana) => kana.character === characters[(promptIndex + offset) % characters.length],
+  )).filter((kana): kana is typeof HIRAGANA[number] => Boolean(kana));
+  const promptCharacter = choices[0] ?? HIRAGANA[0];
+  const tileTones = [styles.tileTone0, styles.tileTone1, styles.tileTone2, styles.tileTone3];
+
+  const resetLevel = (nextLevel = level) => {
+    setLevel(nextLevel);
+    setBoard(createBoard(Math.random, createGameLevel(nextLevel).characters));
+    setScore(0);
+    setMoves(createGameLevel(nextLevel).moveLimit);
+    setSelected(null);
+    setFinished(false);
+    setValidMoves(0);
+    setQuizAnswer(null);
+    setQuizShown(false);
+  };
+
+  const chooseTile = (position: Position) => {
+    if (finished) return;
+    if (!selected) {
+      setSelected(position);
+      return;
+    }
+    if (selected.row === position.row && selected.column === position.column) {
+      setSelected(null);
+      return;
+    }
+    const result = playMove(board, selected, position, Math.random, characters);
+    setSelected(null);
+    if (!result.cleared) return;
+    const nextScore = score + result.score;
+    const nextMoveCount = validMoves + 1;
+    setBoard(result.board);
+    setScore(nextScore);
+    setMoves((value) => value - 1);
+    setValidMoves(nextMoveCount);
+    if (nextScore >= gameLevel.scoreTarget) {
+      setFinished(true);
+      awardActivity(5, level);
+    } else if (nextMoveCount % 3 === 0 && !quizShown) {
+      setQuizShown(true);
+    }
+  };
+
+  return (
+    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScreenTitle eyebrow="A LITTLE PLAY" title="Kana Crush" subtitle="Match three or more of the same hiragana." />
+      <View style={styles.gameIntro}>
+        <Text style={styles.gameIntroIcon}>🌸</Text>
+        <Text style={styles.gameIntroText}><Text style={styles.bold}>How to play:</Text> tap two neighboring tiles to swap. Make a line of 3+ matching sounds. Clear enough tiles to reach the level goal!</Text>
+      </View>
+      <View style={styles.gameStatus}>
+        <View><Text style={styles.gameLabel}>LEVEL</Text><Text style={styles.gameValue}>{level}</Text></View>
+        <View><Text style={styles.gameLabel}>SCORE</Text>        <Text style={styles.gameValue}>{score}<Text style={styles.gameTarget}> / {gameLevel.scoreTarget}</Text></Text></View>
+        <View><Text style={styles.gameLabel}>MOVES</Text><Text style={styles.gameValue}>{moves}</Text></View>
+      </View>
+      <ProgressBar value={score} maximum={gameLevel.scoreTarget} />
+      <View style={styles.board}>
+        {board.map((row, rowIndex) => (
+          <View key={`row-${rowIndex}`} style={styles.boardRow}>
+            {row.map((tile, columnIndex) => {
+              const character = tile.character;
+              const isSelected = selected?.row === rowIndex && selected.column === columnIndex;
+              const colorIndex = HIRAGANA.findIndex((item) => item.character === character) % 4;
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Kana ${character}`}
+                  key={`${rowIndex}-${columnIndex}`}
+                  onPress={() => chooseTile({ row: rowIndex, column: columnIndex })}
+                  style={[
+                    styles.tile,
+                    tileTones[colorIndex],
+                    isSelected && styles.tileSelected,
+                  ]}
+                >
+                  <Text style={styles.tileText}>{character}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ))}
+      </View>
+      <Text style={styles.centerHint}>{selected ? 'Now choose a neighboring tile' : 'Tap a tile to begin a swap'}</Text>
+
+      {quizShown && !finished ? (
+        <View style={styles.quizCard}>
+          <Text style={styles.eyebrow}>SOUND CHECK</Text>
+          <Text style={styles.quizQuestion}>Which kana makes the sound “{promptCharacter.reading}”?</Text>
+          <View style={styles.quizOptions}>
+            {choices.map((choice) => (
+              <Pressable key={choice.character} onPress={() => setQuizAnswer(choice.character)} style={[styles.quizOption, quizAnswer === choice.character && styles.quizOptionSelected]}>
+                <Text style={styles.quizOptionText}>{choice.character}</Text>
+              </Pressable>
+            ))}
+          </View>
+          {quizAnswer ? <Text style={styles.quizFeedback}>{quizAnswer === promptCharacter.character ? 'That’s right! よくできました' : `Not quite — ${promptCharacter.character} is “${promptCharacter.reading}”.`}</Text> : null}
+        </View>
+      ) : null}
+
+      {finished ? (
+        <View style={styles.successCard}>
+          <Text style={styles.successEmoji}>🎉</Text>
+          <Text style={styles.successTitle}>Level complete!</Text>
+          <Text style={styles.bodyText}>Lovely matching. You earned 5 petals for your garden.</Text>
+          <PrimaryButton title="Play next level" onPress={() => resetLevel(level + 1)} />
+          <SecondaryButton title="Back to garden" onPress={onHome} />
+        </View>
+      ) : moves === 0 ? (
+        <View style={styles.successCard}>
+          <Text style={styles.successTitle}>One more try?</Text>
+          <Text style={styles.bodyText}>Reach {gameLevel.scoreTarget} points to complete this level.</Text>
+          <PrimaryButton title="Restart level" onPress={() => resetLevel()} />
+        </View>
+      ) : null}
+    </ScrollView>
+  );
+}
+
+export function FlashcardsScreen({
+  progress,
+  recordReview,
+  awardActivity,
+}: {
+  progress: ReturnType<typeof useProgress>['progress'];
+  recordReview: (cardId: string, rating: ReviewRating) => void;
+  awardActivity: (petals: number) => void;
+}) {
+  const [category, setCategory] = useState<CardCategory>('Due');
+  const [queue, setQueue] = useState<string[]>([]);
+  const [sessionActive, setSessionActive] = useState(false);
+  const [revealed, setRevealed] = useState(false);
+  const [againCounts, setAgainCounts] = useState<Record<string, number>>({});
+  const [sessionTotal, setSessionTotal] = useState(0);
+  const [answered, setAnswered] = useState(0);
+  const [successful, setSuccessful] = useState(0);
+  const cardById = useMemo(() => new Map(STUDY_CARDS.map((card) => [card.id, card])), []);
+  const due = STUDY_CARDS.filter((card) => isDue(progress.reviews[card.id])).length;
+  const fresh = STUDY_CARDS.filter((card) => !progress.reviews[card.id]).length;
+  const learned = STUDY_CARDS.filter((card) => (progress.reviews[card.id]?.successes ?? 0) >= 3).length;
+  const currentCard = queue.length ? cardById.get(queue[0]) : undefined;
+
+  const startSession = () => {
+    const nextQueue = chooseSessionCards(category, progress);
+    setQueue(nextQueue);
+    setSessionTotal(nextQueue.length);
+    setAnswered(0);
+    setSuccessful(0);
+    setAgainCounts({});
+    setSessionActive(true);
+    setRevealed(false);
+  };
+
+  const rateCurrent = (rating: ReviewRating) => {
+    if (!currentCard) return;
+    const [currentId, ...remaining] = queue;
+    recordReview(currentId, rating);
+    const nextSuccessful = successful + (rating === 'again' ? 0 : 1);
+    setSuccessful(nextSuccessful);
+    setAnswered((value) => value + 1);
+    setRevealed(false);
+    let nextQueue: string[];
+    if (rating === 'again') {
+      const attempts = againCounts[currentId] ?? 0;
+      if (attempts < 2) {
+        setAgainCounts((value) => ({ ...value, [currentId]: attempts + 1 }));
+        nextQueue = [...remaining, currentId];
+      } else {
+        nextQueue = remaining;
+      }
+    } else {
+      nextQueue = remaining;
+    }
+    setQueue(nextQueue);
+    if (nextQueue.length === 0) awardActivity(3);
+  };
+
+  return (
+    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScreenTitle eyebrow="GENTLE REVIEW" title="Flashcards" subtitle="Small steps today make memories that stay." />
+      <View style={styles.categoryRow}>
+        {(['Due', 'New', 'Learned'] as CardCategory[]).map((item) => {
+          const count = item === 'Due' ? due : item === 'New' ? fresh : learned;
+          return (
+            <Pressable key={item} onPress={() => { setCategory(item); setSessionActive(false); setQueue([]); }} style={[styles.categoryChip, category === item && styles.categoryChipActive]}>
+              <Text style={[styles.categoryName, category === item && styles.categoryNameActive]}>{item}</Text>
+              <Text style={[styles.categoryCount, category === item && styles.categoryNameActive]}>{count}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      {sessionActive && currentCard ? (
+        <View>
+          <View style={styles.sessionHeader}>
+            <Text style={styles.sectionHelper}>Card {Math.min(answered + 1, sessionTotal)} of {sessionTotal}</Text>
+            <Text style={styles.sectionHelper}>🌸 {successful} remembered</Text>
+          </View>
+          <ProgressBar value={answered} maximum={Math.max(sessionTotal, 1)} />
+          <View style={styles.flashcard}>
+            <Text style={styles.cardType}>{currentCard.type === 'kana' ? currentCard.kanaScript?.toUpperCase() : 'EVERYDAY JAPANESE'}</Text>
+            <Text style={styles.flashFront}>{currentCard.front}</Text>
+            {revealed ? (
+              <>
+                <Text style={styles.flashReading}>{currentCard.reading}</Text>
+                <Text style={styles.flashMeaning}>{currentCard.meaning}</Text>
+                {currentCard.exampleJapanese ? <Text style={styles.exampleText}>{currentCard.exampleJapanese}{currentCard.exampleMeaning ? `\n${currentCard.exampleMeaning}` : ''}</Text> : null}
+              </>
+            ) : (
+              <Text style={styles.sectionHelper}>Take a moment to remember…</Text>
+            )}
+            <View style={styles.audioPlaceholder}>
+              <Text style={styles.audioIcon}>🔈</Text>
+              <Text style={styles.audioText}>{currentCard.audioRef ? 'Audio available' : 'Audio pronunciation coming soon'}</Text>
+            </View>
+            {!revealed ? <PrimaryButton title="Reveal answer" onPress={() => setRevealed(true)} /> : null}
+          </View>
+          {revealed ? (
+            <View style={styles.ratingRow}>
+              {([
+                ['again', 'Again', '#F5DDDF'],
+                ['hard', 'Hard', '#F7E8CF'],
+                ['good', 'Good', '#E3EEDF'],
+                ['easy', 'Easy', '#E6E0F1'],
+              ] as [ReviewRating, string, string][]).map(([rating, label, color]) => (
+                <Pressable key={rating} onPress={() => rateCurrent(rating)} style={[styles.ratingButton, { backgroundColor: color }]}>
+                  <Text style={styles.ratingText}>{label}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+          <Text style={styles.sessionNote}>Again returns a card to this session, up to 3 tries. Unresolved cards stay in review.</Text>
+        </View>
+      ) : sessionActive ? (
+        <View style={styles.successCard}>
+          <Text style={styles.successEmoji}>🍵</Text>
+          <Text style={styles.successTitle}>Session complete</Text>
+          <Text style={styles.bodyText}>{successful} successful review{successful === 1 ? '' : 's'} recorded. You earned 3 petals for finishing the session.</Text>
+          <SecondaryButton title="Start another session" onPress={startSession} />
+        </View>
+      ) : (
+        <View style={styles.sessionStartCard}>
+          <Text style={styles.sessionEmoji}>{category === 'Due' ? '🍡' : category === 'New' ? '🌱' : '✨'}</Text>
+          <Text style={styles.sessionHeading}>{category} cards</Text>
+          <Text style={styles.bodyText}>
+            {category === 'Due' ? `${due} card${due === 1 ? '' : 's'} are ready for a little review.`
+              : category === 'New' ? `${fresh} new cards are waiting to meet you.`
+                : `${learned} cards have reached three successful reviews.`}
+          </Text>
+          <Text style={styles.schedulingNote}>Again repeats in-session · Hard: ~12 hours · Good: 1 day, then grows · Easy: 4 days, then grows</Text>
+          {category !== 'Learned' ? <PrimaryButton title="Begin a short session" onPress={startSession} disabled={(category === 'Due' ? due : fresh) === 0} /> : null}
+          {category !== 'Learned' && (category === 'Due' ? due : fresh) === 0 ? <Text style={styles.sectionHelper}>Nothing here right now. Choose another stack.</Text> : null}
+        </View>
+      )}
+      <View style={styles.noteCard}>
+        <Text style={styles.noteTitle}>How progress works</Text>
+        <Text style={styles.noteBody}>Introduced cards have a saved review. A card is mastered after three successful answers; seeing it alone never counts as learning.</Text>
+      </View>
+    </ScrollView>
+  );
+}
+
+export function StoriesScreen({
+  completedStoryIds,
+  completeStory,
+}: {
+  completedStoryIds: string[];
+  completeStory: (storyId: string) => void;
+}) {
+  const [selectedStory, setSelectedStory] = useState<Story | null>(null);
+  const [showTranslation, setShowTranslation] = useState(false);
+  const [selectedWord, setSelectedWord] = useState<Story['vocabulary'][number] | null>(null);
+
+  if (selectedStory) {
+    const completed = completedStoryIds.includes(selectedStory.id);
+    return (
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <Pressable onPress={() => { setSelectedStory(null); setShowTranslation(false); setSelectedWord(null); }} style={styles.backLink}>
+          <Text style={styles.backLinkText}>← All stories</Text>
+        </Pressable>
+        <ScreenTitle eyebrow={selectedStory.difficulty} title={selectedStory.title} />
+        <View style={styles.storyDetailCard}>
+          <Text style={styles.japaneseStory}>{selectedStory.japaneseText}</Text>
+          <Text style={styles.storyHint}>Tap a word below to explore its meaning.</Text>
+          <View style={styles.wordChips}>
+            {selectedStory.vocabulary.map((word) => (
+              <Pressable key={`${selectedStory.id}-${word.japanese}`} onPress={() => setSelectedWord(word)} style={[styles.wordChip, selectedWord?.japanese === word.japanese && styles.wordChipSelected]}>
+                <Text style={styles.wordChipText}>{word.japanese}</Text>
+              </Pressable>
+            ))}
+          </View>
+          {selectedWord ? (
+            <View style={styles.wordMeaning}>
+              <Text style={styles.wordMeaningJapanese}>{selectedWord.japanese} · {selectedWord.reading}</Text>
+              <Text style={styles.wordMeaningText}>{selectedWord.meaning}</Text>
+            </View>
+          ) : null}
+          <SecondaryButton title={showTranslation ? 'Hide translation' : 'Reveal translation'} onPress={() => setShowTranslation(!showTranslation)} />
+          {showTranslation ? <Text style={styles.translationText}>{selectedStory.translation}</Text> : null}
+        </View>
+        <View style={styles.audioPlaceholder}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Story audio unavailable" accessibilityState={{ disabled: true }} disabled style={styles.audioControl}>
+            <Text style={styles.audioIcon}>▶</Text>
+          </Pressable>
+          <View style={styles.audioCopy}>
+            <Text style={styles.noteTitle}>Listen along</Text>
+            <Text style={styles.audioText}>{selectedStory.audioRef ? 'Audio ready to play' : 'Audio unavailable · Japanese text-to-speech can be added later'}</Text>
+          </View>
+        </View>
+        <View style={styles.storyWordsCard}>
+          <Text style={styles.noteTitle}>Story words</Text>
+          {selectedStory.vocabulary.map((word) => (
+            <View key={`${word.japanese}-meaning`} style={styles.vocabularyLine}>
+              <Text style={styles.vocabularyJapanese}>{word.japanese}</Text>
+              <Text style={styles.vocabularyReading}>{word.reading}</Text>
+              <Text style={styles.vocabularyMeaning}>{word.meaning}</Text>
+            </View>
+          ))}
+        </View>
+        <PrimaryButton
+          title={completed ? 'Story completed ✓' : 'Mark story complete · earn 2 petals'}
+          disabled={completed}
+          onPress={() => completeStory(selectedStory.id)}
+        />
+      </ScrollView>
+    );
+  }
+
+  return (
+    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScreenTitle eyebrow="GENTLE READING" title="Little stories" subtitle="Beginner Japanese, one small story at a time." />
+      {STORIES.map((story, index) => (
+        <Pressable key={story.id} onPress={() => setSelectedStory(story)} style={styles.storyCard}>
+          <View style={[styles.storyArt, index === 1 && styles.storyArtTea, index === 2 && styles.storyArtDog]}>
+            <Text style={styles.storyArtEmoji}>{['🌸', '🍵', '🐕'][index]}</Text>
+          </View>
+          <View style={styles.storyCardCopy}>
+            <Text style={styles.eyebrow}>{story.difficulty}</Text>
+            <Text style={styles.storyTitle}>{story.title}</Text>
+            <Text style={styles.storyPreview}>{story.japaneseText}</Text>
+            <Text style={styles.storyStatus}>{completedStoryIds.includes(story.id) ? '✓ Completed' : 'Read story →'}</Text>
+          </View>
+        </Pressable>
+      ))}
+      <Text style={styles.sessionNote}>Stories are hand-curated for A1 learners. Audio is not included yet.</Text>
+    </ScrollView>
+  );
+}
+
+export function GardenScreen({
+  petals,
+  ownedDecorationIds,
+  buyDecoration,
+}: {
+  petals: number;
+  ownedDecorationIds: string[];
+  buyDecoration: (decorationId: string) => void;
+}) {
+  const gardenItems = DECORATIONS.filter((item) => ownedDecorationIds.includes(item.id));
+  return (
+    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <View style={styles.gardenHeading}>
+        <View>
+          <Text style={styles.eyebrow}>YOUR LITTLE RETREAT</Text>
+          <Text style={styles.title}>My Garden</Text>
+        </View>
+        <View style={styles.petalsPill}><Text style={styles.petalsText}>🌸 {petals}</Text></View>
+      </View>
+      <View style={styles.gardenCanvas}>
+        <Text style={styles.gardenSun}>☀️</Text>
+        <Text style={styles.gardenCloudLeft}>☁️</Text>
+        <View style={styles.gardenBackPlants}><Text>🎋</Text><Text>🌿</Text><Text>🎋</Text></View>
+        <View style={styles.gardenGround} />
+        <View style={styles.gardenSceneItems}>
+          {gardenItems.map((item) => (
+            <View key={item.id} style={[styles.gardenObject, item.area === 'house' && styles.gardenObjectHouse]}>
+              <Text style={styles.gardenObjectEmoji}>{item.emoji}</Text>
+              <Text style={styles.gardenObjectName}>{item.name}</Text>
+            </View>
+          ))}
+        </View>
+        <Text style={styles.gardenGrass}>🌱　🌷　🌱　🌼　🌱</Text>
+      </View>
+      <View style={styles.gardenWelcome}>
+        <Text style={styles.gardenWelcomeTitle}>A garden that grows with you</Text>
+        <Text style={styles.bodyText}>Earn petals by learning, finishing stories, and completing game levels. Spend them on new garden friends.</Text>
+      </View>
+      <SectionHeading title="Garden shop" helper="A few little treasures to collect" />
+      {DECORATIONS.filter((item) => item.price > 0).map((item) => {
+        const owned = ownedDecorationIds.includes(item.id);
+        return (
+          <View key={item.id} style={styles.shopRow}>
+            <Text style={styles.shopEmoji}>{item.emoji}</Text>
+            <View style={styles.shopCopy}>
+              <Text style={styles.shopName}>{item.name}</Text>
+              <Text style={styles.shopPrice}>{owned ? 'Already in your garden' : `🌸 ${item.price} petals`}</Text>
+            </View>
+            <SecondaryButton
+              title={owned ? 'Owned' : 'Add'}
+              disabled={owned || petals < item.price}
+              onPress={() => buyDecoration(item.id)}
+            />
+          </View>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
+export function ProgressScreen({ progress }: { progress: ReturnType<typeof useProgress>['progress'] }) {
+  const due = todayCount(progress);
+  const reviewValues = Object.values(progress.reviews);
+  const introduced = reviewValues.length;
+  const mastered = reviewValues.filter((item) => item.successes >= 3).length;
+  const learnedHiragana = HIRAGANA.filter((item) => (progress.reviews[item.id]?.successes ?? 0) >= 3).length;
+  const introducedHiragana = HIRAGANA.filter((item) => progress.reviews[item.id]).length;
+  const learnedKatakana = KATAKANA.filter((item) => (progress.reviews[item.id]?.successes ?? 0) >= 3).length;
+  const introducedKatakana = KATAKANA.filter((item) => progress.reviews[item.id]).length;
+  const learnedVocabulary = VOCABULARY.filter((item) => (progress.reviews[item.id]?.successes ?? 0) >= 3).length;
+  const today = localDateKey();
+  const todayActivity = progress.dailyActivity.find((activity) => activity.date === today);
+  const reviewedToday = todayActivity?.successfulReviews ?? 0;
+  const overallTotal = HIRAGANA.length + KATAKANA.length + VOCABULARY.length;
+
+  return (
+    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScreenTitle eyebrow="YOUR JOURNEY SO FAR" title="Progress" subtitle="Every little practice session adds up." />
+      <View style={styles.overallCard}>
+        <View style={styles.overallHeading}>
+          <View><Text style={styles.eyebrow}>OVERALL LEARNING</Text><Text style={styles.overallCount}>{mastered}<Text style={styles.overallOutOf}> / {overallTotal}</Text></Text></View>
+          <Text style={styles.overallFlower}>🌱</Text>
+        </View>
+        <Text style={styles.sectionHelper}>Mastered after 3 successful reviews · {introduced} introduced</Text>
+        <ProgressBar value={mastered} maximum={overallTotal} />
+      </View>
+      <SectionHeading title="Kana garden" />
+      <LearningProgressRow label="Hiragana" symbol="あ" introduced={introducedHiragana} mastered={learnedHiragana} total={HIRAGANA.length} />
+      <LearningProgressRow label="Katakana" symbol="ア" introduced={introducedKatakana} mastered={learnedKatakana} total={KATAKANA.length} color={COLORS.green} />
+      <View style={styles.comingSoonNote}><Text style={styles.comingSoonText}>Hiragana is the main path. Katakana comes next; introductory kanji is optional.</Text></View>
+      <SectionHeading title="Optional kanji preview" helper="A small extra, separate from your kana path" />
+      {INTRODUCTORY_KANJI.map((item) => (
+        <View key={item.id} style={styles.kanjiRow}>
+          <Text style={styles.kanjiCharacter}>{item.character}</Text>
+          <View style={styles.kanjiCopy}>
+            <Text style={styles.kanjiMeaning}>{item.meanings.join(', ')}</Text>
+            <Text style={styles.kanjiReading}>On: {item.readings.on?.join('、') ?? '—'} · Kun: {item.readings.kun?.join('、') ?? '—'}</Text>
+            <Text style={styles.kanjiExample}>{item.exampleWords.map((word) => `${word.japanese} · ${word.reading} · ${word.meaning}`).join(' / ')}</Text>
+          </View>
+        </View>
+      ))}
+      <SectionHeading title="Learning milestones" />
+      <View style={styles.metricsGrid}>
+        <MetricCard emoji="📚" value={`${learnedVocabulary}/${VOCABULARY.length}`} label="vocabulary mastered" />
+        <MetricCard emoji="🗂️" value={`${due}`} label="flashcards due today" />
+        <MetricCard emoji="📖" value={`${progress.storiesCompleted.length}/${STORIES.length}`} label="stories completed" />
+        <MetricCard emoji="🎮" value={`${progress.completedLevels}`} label="game levels completed" />
+        <MetricCard emoji="🔥" value={`${currentStreak(progress.dailyActivity.map((activity) => activity.date))} days`} label="current streak" />
+        <MetricCard emoji="✨" value={`${Math.min(reviewedToday, progress.dailyGoal)}/${progress.dailyGoal}`} label="today's card goal" />
+      </View>
+      <View style={styles.noteCard}>
+        <Text style={styles.noteTitle}>What do these numbers mean?</Text>
+        <Text style={styles.noteBody}>Introduced = reviewed at least once. Mastered = three non-Again answers. Due = a saved review date that has arrived. Nothing is counted as learned just for being opened.</Text>
+      </View>
+    </ScrollView>
+  );
+}
+
+function LearningProgressRow({
+  label, symbol, introduced, mastered, total, color,
+}: { label: string; symbol: string; introduced: number; mastered: number; total: number; color?: string }) {
+  return (
+    <View style={styles.learningRow}>
+      <View style={styles.learningSymbol}><Text style={styles.learningSymbolText}>{symbol}</Text></View>
+      <View style={styles.learningCopy}>
+        <View style={styles.learningTopLine}><Text style={styles.learningName}>{label}</Text><Text style={styles.learningCount}>{mastered}/{total} mastered</Text></View>
+        <ProgressBar value={mastered} maximum={total} color={color} />
+        <Text style={styles.learningIntroduced}>{introduced} introduced · {total - introduced} not yet introduced</Text>
+      </View>
+    </View>
+  );
+}
+
+function MetricCard({ emoji, value, label }: { emoji: string; value: string; label: string }) {
+  return (
+    <View style={styles.metricCard}>
+      <Text style={styles.metricEmoji}>{emoji}</Text>
+      <Text style={styles.metricValue}>{value}</Text>
+      <Text style={styles.metricLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function PrimaryButton({
+  title, onPress, disabled = false,
+}: { title: string; onPress: () => void; disabled?: boolean }) {
+  return (
+    <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.primaryButton, disabled && styles.buttonDisabled, pressed && !disabled && styles.pressed]}>
+      <Text style={styles.primaryButtonText}>{title}</Text>
+    </Pressable>
+  );
+}
+
+function SecondaryButton({
+  title, onPress, disabled = false,
+}: { title: string; onPress: () => void; disabled?: boolean }) {
+  return (
+    <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.secondaryButton, disabled && styles.buttonDisabled, pressed && !disabled && styles.pressed]}>
+      <Text style={styles.secondaryButtonText}>{title}</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  loading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.cream, gap: 12 },
+  loadingText: { color: COLORS.muted, fontSize: 14 },
+  content: { paddingHorizontal: 20, paddingTop: 14, paddingBottom: 28 },
+  screenTitle: { marginBottom: 20 },
+  eyebrow: { color: COLORS.pink, fontSize: 10, fontWeight: '800', letterSpacing: 1.4, marginBottom: 6 },
+  title: { color: COLORS.ink, fontSize: 29, lineHeight: 35, fontWeight: '800' },
+  subtitle: { color: COLORS.muted, fontSize: 13, marginTop: 4, lineHeight: 19 },
+  homeTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 },
+  homeGreeting: { color: COLORS.ink, fontSize: 23, lineHeight: 30, fontWeight: '800' },
+  streakPill: { backgroundColor: '#FFF0D3', borderRadius: 18, paddingHorizontal: 12, paddingVertical: 8 },
+  streakText: { color: '#875B16', fontSize: 12, fontWeight: '700' },
+  heroCard: { backgroundColor: '#728E77', borderRadius: 24, padding: 19, marginBottom: 23 },
+  heroTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  heroKicker: { color: '#E5F1E4', fontWeight: '800', fontSize: 9, letterSpacing: 1.2 },
+  heroHeading: { color: '#FFFFFF', fontSize: 20, fontWeight: '800', marginTop: 5 },
+  heroCopy: { color: '#E2ECDC', fontSize: 12, marginTop: 4 },
+  heroFlower: { fontSize: 38 },
+  heroStats: { flexDirection: 'row', alignItems: 'center', marginVertical: 16 },
+  heroStat: { color: '#FFFFFF', fontSize: 22, fontWeight: '800' },
+  heroStatSmall: { fontSize: 13, fontWeight: '600' },
+  heroStatLabel: { color: '#E5F1E4', fontSize: 10, marginTop: 3 },
+  heroStatDivider: { width: 1, height: 35, backgroundColor: '#A9BDAA', marginHorizontal: 23 },
+  heroDue: { flex: 1 },
+  progressTrack: { height: 7, backgroundColor: '#F0E8E4', borderRadius: 8, overflow: 'hidden' },
+  progressFill: { height: '100%', borderRadius: 8 },
+  goalRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 9 },
+  sectionHeading: { marginTop: 3, marginBottom: 12 },
+  sectionTitle: { color: COLORS.ink, fontSize: 17, fontWeight: '800' },
+  sectionHelper: { color: COLORS.muted, fontSize: 11, marginTop: 3 },
+  quickGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 23 },
+  quickCard: { width: '48%', minHeight: 116, borderRadius: 19, padding: 14, justifyContent: 'center' },
+  quickEmoji: { fontSize: 23, marginBottom: 7 },
+  quickTitle: { color: COLORS.ink, fontSize: 13, fontWeight: '800' },
+  quickDetail: { color: COLORS.muted, fontSize: 10, marginTop: 3 },
+  pressed: { opacity: 0.78, transform: [{ scale: 0.98 }] },
+  gardenPreview: { borderRadius: 22, backgroundColor: '#E5F0E7', overflow: 'hidden', minHeight: 165, marginBottom: 12 },
+  gardenCloud: { position: 'absolute', top: 11, right: 24, fontSize: 24 },
+  gardenScene: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-around', height: 116, paddingHorizontal: 22, paddingTop: 24 },
+  sceneTree: { fontSize: 42 },
+  sceneHouse: { fontSize: 62 },
+  scenePlant: { fontSize: 36 },
+  sceneLantern: { fontSize: 28 },
+  gardenCaption: { backgroundColor: '#FFFFFFB8', paddingVertical: 10, paddingHorizontal: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  gardenCaptionTitle: { color: COLORS.ink, fontWeight: '700', fontSize: 12 },
+  gardenCaptionText: { color: COLORS.green, fontSize: 11, fontWeight: '700' },
+  gameIntro: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: COLORS.pinkLight, borderRadius: 15, padding: 13, marginBottom: 15 },
+  gameIntroIcon: { fontSize: 24 },
+  gameIntroText: { flex: 1, color: COLORS.ink, fontSize: 11, lineHeight: 17 },
+  bold: { fontWeight: '800' },
+  gameStatus: { backgroundColor: COLORS.paper, borderRadius: 17, padding: 14, flexDirection: 'row', justifyContent: 'space-around', marginBottom: 13, borderWidth: 1, borderColor: COLORS.border },
+  gameLabel: { color: COLORS.muted, fontSize: 9, fontWeight: '800', letterSpacing: 1, textAlign: 'center' },
+  gameValue: { color: COLORS.ink, fontSize: 18, fontWeight: '800', textAlign: 'center', marginTop: 4 },
+  gameTarget: { color: COLORS.muted, fontSize: 11, fontWeight: '600' },
+  board: { alignSelf: 'center', marginTop: 18, padding: 8, backgroundColor: '#F3E4E7', borderRadius: 18, gap: 5 },
+  boardRow: { flexDirection: 'row', gap: 5 },
+  tile: { width: 43, height: 43, borderRadius: 12, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#FFFFFFA0' },
+  tileTone0: { backgroundColor: '#F8DDE2' },
+  tileTone1: { backgroundColor: '#DFEEDC' },
+  tileTone2: { backgroundColor: '#F7EBCF' },
+  tileTone3: { backgroundColor: '#E9E1F2' },
+  tileSelected: { borderColor: COLORS.pink, transform: [{ scale: 1.08 }] },
+  tileText: { color: COLORS.ink, fontSize: 22, fontWeight: '700' },
+  centerHint: { color: COLORS.muted, textAlign: 'center', fontSize: 11, marginTop: 10, marginBottom: 9 },
+  quizCard: { backgroundColor: COLORS.paper, borderRadius: 18, padding: 16, marginTop: 14, borderWidth: 1, borderColor: COLORS.border },
+  quizQuestion: { color: COLORS.ink, fontSize: 14, fontWeight: '700', marginBottom: 12 },
+  quizOptions: { flexDirection: 'row', gap: 10 },
+  quizOption: { flex: 1, alignItems: 'center', padding: 12, backgroundColor: COLORS.cream, borderRadius: 12 },
+  quizOptionSelected: { borderWidth: 2, borderColor: COLORS.pink },
+  quizOptionText: { color: COLORS.ink, fontSize: 23, fontWeight: '700' },
+  quizFeedback: { color: COLORS.green, fontSize: 12, fontWeight: '700', marginTop: 10 },
+  successCard: { alignItems: 'center', backgroundColor: COLORS.greenLight, borderRadius: 20, padding: 20, marginTop: 16 },
+  successEmoji: { fontSize: 38, marginBottom: 6 },
+  successTitle: { color: COLORS.ink, fontSize: 21, fontWeight: '800' },
+  bodyText: { color: COLORS.muted, fontSize: 12, textAlign: 'center', lineHeight: 18, marginTop: 6, marginBottom: 12 },
+  primaryButton: { backgroundColor: COLORS.pink, borderRadius: 14, paddingHorizontal: 17, paddingVertical: 13, alignItems: 'center', marginTop: 12, minHeight: 44, justifyContent: 'center' },
+  primaryButtonText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800', textAlign: 'center' },
+  secondaryButton: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: COLORS.border, borderRadius: 13, paddingHorizontal: 13, paddingVertical: 10, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
+  secondaryButtonText: { color: COLORS.ink, fontSize: 11, fontWeight: '700', textAlign: 'center' },
+  buttonDisabled: { opacity: 0.48 },
+  categoryRow: { flexDirection: 'row', gap: 8, marginBottom: 17 },
+  categoryChip: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6, paddingVertical: 10, backgroundColor: '#FFFFFF', borderRadius: 13, borderWidth: 1, borderColor: COLORS.border },
+  categoryChipActive: { backgroundColor: COLORS.pink, borderColor: COLORS.pink },
+  categoryName: { color: COLORS.ink, fontSize: 11, fontWeight: '700' },
+  categoryNameActive: { color: '#FFFFFF' },
+  categoryCount: { color: COLORS.muted, fontSize: 10, fontWeight: '700' },
+  sessionHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+  flashcard: { backgroundColor: '#FFFFFF', borderRadius: 22, padding: 21, alignItems: 'center', minHeight: 265, justifyContent: 'center', marginTop: 15, borderWidth: 1, borderColor: COLORS.border },
+  cardType: { color: COLORS.pink, fontSize: 9, fontWeight: '800', letterSpacing: 1.3 },
+  flashFront: { color: COLORS.ink, fontSize: 62, fontWeight: '600', marginTop: 16, marginBottom: 7 },
+  flashReading: { color: COLORS.green, fontSize: 18, fontWeight: '700' },
+  flashMeaning: { color: COLORS.ink, fontSize: 16, fontWeight: '700', textAlign: 'center', marginTop: 6 },
+  exampleText: { color: COLORS.muted, fontSize: 12, textAlign: 'center', lineHeight: 18, marginTop: 12 },
+  audioPlaceholder: { flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: '#F7F4F1', borderRadius: 12, padding: 10, marginTop: 17, alignSelf: 'stretch' },
+  audioControl: { width: 27, height: 27, borderRadius: 14, backgroundColor: '#E7F0E8', alignItems: 'center', justifyContent: 'center' },
+  audioIcon: { color: COLORS.green, fontSize: 17 },
+  audioText: { flex: 1, color: COLORS.muted, fontSize: 10, lineHeight: 15 },
+  ratingRow: { flexDirection: 'row', gap: 7, marginTop: 12 },
+  ratingButton: { flex: 1, borderRadius: 12, paddingVertical: 13, alignItems: 'center' },
+  ratingText: { color: COLORS.ink, fontSize: 11, fontWeight: '800' },
+  sessionNote: { color: COLORS.muted, fontSize: 10, lineHeight: 15, textAlign: 'center', marginTop: 12 },
+  sessionStartCard: { alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 20, padding: 21, borderWidth: 1, borderColor: COLORS.border },
+  sessionEmoji: { fontSize: 36, marginBottom: 6 },
+  sessionHeading: { color: COLORS.ink, fontSize: 18, fontWeight: '800' },
+  schedulingNote: { backgroundColor: COLORS.cream, color: COLORS.muted, fontSize: 10, lineHeight: 15, textAlign: 'center', padding: 11, borderRadius: 12, marginBottom: 6 },
+  noteCard: { backgroundColor: '#F7F1EB', borderRadius: 16, padding: 15, marginTop: 18 },
+  noteTitle: { color: COLORS.ink, fontSize: 12, fontWeight: '800' },
+  noteBody: { color: COLORS.muted, fontSize: 11, lineHeight: 17, marginTop: 5 },
+  backLink: { paddingVertical: 4, marginBottom: 14, alignSelf: 'flex-start' },
+  backLinkText: { color: COLORS.green, fontSize: 12, fontWeight: '800' },
+  storyCard: { backgroundColor: '#FFFFFF', borderRadius: 18, flexDirection: 'row', overflow: 'hidden', marginBottom: 11, minHeight: 112, borderWidth: 1, borderColor: COLORS.border },
+  storyArt: { width: 98, backgroundColor: '#F8E5E7', justifyContent: 'center', alignItems: 'center' },
+  storyArtTea: { backgroundColor: '#F6EDDA' },
+  storyArtDog: { backgroundColor: '#E4EEE2' },
+  storyArtEmoji: { fontSize: 40 },
+  storyCardCopy: { flex: 1, padding: 13, justifyContent: 'center' },
+  storyTitle: { color: COLORS.ink, fontSize: 14, fontWeight: '800' },
+  storyPreview: { color: COLORS.muted, fontSize: 11, marginTop: 4 },
+  storyStatus: { color: COLORS.green, fontSize: 10, fontWeight: '700', marginTop: 7 },
+  storyDetailCard: { backgroundColor: '#FFFFFF', borderRadius: 20, padding: 18, borderWidth: 1, borderColor: COLORS.border },
+  japaneseStory: { color: COLORS.ink, fontSize: 24, lineHeight: 40, fontWeight: '600' },
+  storyHint: { color: COLORS.muted, fontSize: 10, marginTop: 8 },
+  wordChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 12 },
+  wordChip: { backgroundColor: COLORS.greenLight, paddingVertical: 7, paddingHorizontal: 9, borderRadius: 11 },
+  wordChipSelected: { borderWidth: 1, borderColor: COLORS.green },
+  wordChipText: { color: COLORS.ink, fontSize: 11, fontWeight: '700' },
+  wordMeaning: { backgroundColor: '#F8F4EE', borderRadius: 12, padding: 11, marginTop: 10 },
+  wordMeaningJapanese: { color: COLORS.green, fontSize: 11, fontWeight: '700' },
+  wordMeaningText: { color: COLORS.ink, fontSize: 13, fontWeight: '700', marginTop: 3 },
+  translationText: { color: COLORS.ink, fontSize: 14, lineHeight: 20, marginTop: 12, textAlign: 'center' },
+  audioCopy: { flex: 1 },
+  storyWordsCard: { backgroundColor: '#FFFFFF', borderRadius: 17, padding: 15, marginTop: 13, borderWidth: 1, borderColor: COLORS.border },
+  vocabularyLine: { flexDirection: 'row', alignItems: 'center', paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: '#F5EFEC', gap: 8 },
+  vocabularyJapanese: { color: COLORS.ink, fontSize: 13, fontWeight: '800', minWidth: 78 },
+  vocabularyReading: { color: COLORS.green, fontSize: 10, minWidth: 85 },
+  vocabularyMeaning: { color: COLORS.muted, fontSize: 10, flex: 1 },
+  gardenHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 },
+  petalsPill: { backgroundColor: '#F8E5E7', borderRadius: 15, paddingVertical: 9, paddingHorizontal: 13 },
+  petalsText: { color: '#9A5865', fontSize: 13, fontWeight: '800' },
+  gardenCanvas: { height: 255, backgroundColor: '#DCECE3', borderRadius: 23, overflow: 'hidden', position: 'relative', marginBottom: 15 },
+  gardenSun: { position: 'absolute', top: 15, right: 19, fontSize: 25 },
+  gardenCloudLeft: { position: 'absolute', top: 28, left: 18, fontSize: 22 },
+  gardenBackPlants: { position: 'absolute', top: 81, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-around', fontSize: 27 },
+  gardenGround: { position: 'absolute', bottom: 0, height: 90, left: 0, right: 0, backgroundColor: '#C5DAB9' },
+  gardenSceneItems: { position: 'absolute', top: 87, left: 10, right: 10, height: 116, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'flex-end' },
+  gardenObject: { alignItems: 'center', maxWidth: 95 },
+  gardenObjectHouse: { transform: [{ translateY: 2 }] },
+  gardenObjectEmoji: { fontSize: 44 },
+  gardenObjectName: { color: COLORS.ink, fontSize: 9, fontWeight: '700', backgroundColor: '#FFFFFFC9', paddingHorizontal: 6, borderRadius: 8, marginTop: 3 },
+  gardenGrass: { position: 'absolute', bottom: 7, alignSelf: 'center', fontSize: 19 },
+  gardenWelcome: { padding: 15, backgroundColor: '#FFFFFF', borderRadius: 17, marginBottom: 19 },
+  gardenWelcomeTitle: { color: COLORS.ink, fontSize: 14, fontWeight: '800' },
+  shopRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 15, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: COLORS.border },
+  shopEmoji: { fontSize: 27, width: 43, textAlign: 'center' },
+  shopCopy: { flex: 1, marginLeft: 6 },
+  shopName: { color: COLORS.ink, fontSize: 12, fontWeight: '800' },
+  shopPrice: { color: COLORS.muted, fontSize: 10, marginTop: 3 },
+  overallCard: { backgroundColor: '#FFFFFF', borderRadius: 20, padding: 17, marginBottom: 20, borderWidth: 1, borderColor: COLORS.border },
+  overallHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  overallCount: { color: COLORS.ink, fontSize: 30, fontWeight: '800', marginVertical: 2 },
+  overallOutOf: { color: COLORS.muted, fontSize: 15 },
+  overallFlower: { fontSize: 33 },
+  learningRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 16, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: COLORS.border },
+  learningSymbol: { width: 43, height: 43, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.pinkLight, borderRadius: 13, marginRight: 12 },
+  learningSymbolText: { color: COLORS.ink, fontSize: 23, fontWeight: '700' },
+  learningCopy: { flex: 1 },
+  learningTopLine: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 7 },
+  learningName: { color: COLORS.ink, fontWeight: '800', fontSize: 12 },
+  learningCount: { color: COLORS.muted, fontSize: 10 },
+  learningIntroduced: { color: COLORS.muted, fontSize: 9, marginTop: 5 },
+  comingSoonNote: { paddingHorizontal: 5, paddingTop: 2, paddingBottom: 16 },
+  comingSoonText: { color: COLORS.muted, fontSize: 10, lineHeight: 15 },
+  kanjiRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8F4EE', borderRadius: 15, padding: 12, marginBottom: 8 },
+  kanjiCharacter: { color: COLORS.ink, fontSize: 30, fontWeight: '700', width: 48, textAlign: 'center' },
+  kanjiCopy: { flex: 1, marginLeft: 8 },
+  kanjiMeaning: { color: COLORS.ink, fontSize: 12, fontWeight: '800' },
+  kanjiReading: { color: COLORS.green, fontSize: 10, marginTop: 3 },
+  kanjiExample: { color: COLORS.muted, fontSize: 10, marginTop: 3 },
+  metricsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 },
+  metricCard: { width: '48%', minHeight: 98, backgroundColor: '#FFFFFF', borderRadius: 15, padding: 12, borderWidth: 1, borderColor: COLORS.border },
+  metricEmoji: { fontSize: 19 },
+  metricValue: { color: COLORS.ink, fontSize: 17, fontWeight: '800', marginTop: 4 },
+  metricLabel: { color: COLORS.muted, fontSize: 9, lineHeight: 13, marginTop: 2 },
 });
