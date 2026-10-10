@@ -1,6 +1,7 @@
 export type KanaScript = 'hiragana' | 'katakana';
 export type LearningStatus = 'new' | 'learning' | 'mastered';
 export type ReviewRating = 'again' | 'hard' | 'good' | 'easy';
+export type ReviewState = 'new' | 'learning' | 'review' | 'relearning';
 
 export interface KanaCharacter {
   id: string;
@@ -15,12 +16,19 @@ export interface VocabularyItem {
   id: string;
   japanese: string;
   reading: string;
+  romaji?: string;
   meaning: string;
   partOfSpeech?: string;
+  wordType?: string;
+  tags?: string[];
+  exampleSentence?: string;
+  exampleTranslation?: string;
   exampleJapanese?: string;
   exampleReading?: string;
   exampleMeaning?: string;
   audioRef?: string;
+  audioUrl?: string;
+  kanji?: string;
   learningStatus?: LearningStatus;
 }
 
@@ -53,12 +61,21 @@ export interface ReviewRecord {
   dueAt: string;
   successes: number;
   intervalDays: number;
+  state?: ReviewState;
+  reviewCount?: number;
+  learningStep?: number;
+  lapseCount?: number;
+  lastReviewedAt?: string;
+  difficulty?: number;
+  stability?: number;
 }
 
 export interface ReviewEvent {
   cardId: string;
   reviewedAt: string;
   rating: ReviewRating;
+  answerCorrect?: boolean;
+  answer?: string;
 }
 
 export interface GardenDecoration {
@@ -79,6 +96,7 @@ export interface DailyActivity {
   date: string;
   reviewAttempts: number;
   successfulReviews: number;
+  studyTimeSeconds?: number;
   storiesCompleted: number;
   sessionsCompleted: number;
   levelsCompleted: number;
@@ -105,6 +123,7 @@ export interface StudyCard {
   front: string;
   reading: string;
   meaning: string;
+  kanji?: string;
   exampleJapanese?: string;
   exampleMeaning?: string;
   audioRef?: string;

@@ -1,0 +1,50 @@
+export const TOKENS = {
+  colors: {
+    navy: '#17294B',
+    indigo: '#253B69',
+    pink: '#FF7197',
+    cherry: '#FF8AA8',
+    cream: '#FFF8EE',
+    lavender: '#C9B9F4',
+    sky: '#82C7F2',
+    sage: '#9BCBA7',
+    green: '#9BCBA7',
+    greenLight: '#EAF8F1',
+    pinkLight: '#FDE8EE',
+    ink: '#1D2742',
+    muted: '#5C6A82',
+    card: '#FFFDF9',
+    paper: '#FFFFFF',
+    border: '#E8DFF0',
+    peach: '#FFE6D9',
+    mint: '#E8F6EE',
+    gold: '#F4C76D',
+    leaf: '#7AAE83',
+    rose: '#F8E7EC',
+    plum: '#4F446B',
+  },
+  shadows: {
+    soft: {
+      shadowColor: '#17294B',
+      shadowOpacity: 0.12,
+      shadowRadius: 18,
+      elevation: 6,
+    },
+    medium: {
+      shadowColor: '#17294B',
+      shadowOpacity: 0.18,
+      shadowRadius: 22,
+      elevation: 8,
+    },
+  },
+  radii: {
+    xs: 10,
+    sm: 14,
+    md: 18,
+    lg: 22,
+    xl: 28,
+    pill: 999,
+  },
+};
+
+export const palette = TOKENS.colors;

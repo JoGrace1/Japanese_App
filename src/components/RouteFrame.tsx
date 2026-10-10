@@ -12,7 +12,7 @@ export function RouteFrame({ children, storageError }: { children: ReactNode; st
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#FFF9F1' },
-  content: { flex: 1 },
-  storageWarning: { backgroundColor: '#FFF0E1', color: '#8A4E20', paddingHorizontal: 16, paddingVertical: 8, fontSize: 12 },
+  safeArea: { flex: 1, backgroundColor: '#FFF8EE' },
+  content: { flex: 1, backgroundColor: '#FFF8EE' },
+  storageWarning: { backgroundColor: '#FFF1D9', color: '#7A553F', paddingHorizontal: 16, paddingVertical: 8, fontSize: 12, borderBottomWidth: 1, borderBottomColor: '#F4D9AE' },
 });

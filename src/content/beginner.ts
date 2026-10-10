@@ -32,16 +32,61 @@ export const KATAKANA: KanaCharacter[] = [
   level: Math.floor(index / 5) + 1,
 }));
 
+const ROMAJI_BY_KANA: Record<string, string> = {
+  あ: 'a', い: 'i', う: 'u', え: 'e', お: 'o',
+  か: 'ka', き: 'ki', く: 'ku', け: 'ke', こ: 'ko',
+  さ: 'sa', し: 'shi', す: 'su', せ: 'se', そ: 'so',
+  た: 'ta', ち: 'chi', つ: 'tsu', て: 'te', と: 'to',
+  な: 'na', に: 'ni', ぬ: 'nu', ね: 'ne', の: 'no',
+  は: 'ha', ひ: 'hi', ふ: 'fu', へ: 'he', ほ: 'ho',
+  ま: 'ma', み: 'mi', む: 'mu', め: 'me', も: 'mo',
+  や: 'ya', ゆ: 'yu', よ: 'yo',
+  ら: 'ra', り: 'ri', る: 'ru', れ: 're', ろ: 'ro',
+  わ: 'wa', を: 'o', ん: 'n',
+  が: 'ga', ぎ: 'gi', ぐ: 'gu', げ: 'ge', ご: 'go',
+  ざ: 'za', じ: 'ji', ず: 'zu', ぜ: 'ze', ぞ: 'zo',
+  だ: 'da', ぢ: 'ji', づ: 'zu', で: 'de', ど: 'do',
+  ば: 'ba', び: 'bi', ぶ: 'bu', べ: 'be', ぼ: 'bo',
+  ぱ: 'pa', ぴ: 'pi', ぷ: 'pu', ぺ: 'pe', ぽ: 'po',
+};
+
+const COMBINED_ROMAJI: Record<string, string> = {
+  きゃ: 'kya', きゅ: 'kyu', きょ: 'kyo', しゃ: 'sha', しゅ: 'shu', しょ: 'sho',
+  ちゃ: 'cha', ちゅ: 'chu', ちょ: 'cho', にゃ: 'nya', にゅ: 'nyu', にょ: 'nyo',
+  ひゃ: 'hya', ひゅ: 'hyu', ひょ: 'hyo', みゃ: 'mya', みゅ: 'myu', みょ: 'myo',
+  りゃ: 'rya', りゅ: 'ryu', りょ: 'ryo', ぎゃ: 'gya', ぎゅ: 'gyu', ぎょ: 'gyo',
+  じゃ: 'ja', じゅ: 'ju', じょ: 'jo', びゃ: 'bya', びゅ: 'byu', びょ: 'byo',
+  ぴゃ: 'pya', ぴゅ: 'pyu', ぴょ: 'pyo',
+};
+
+function kanaToRomaji(reading: string): string {
+  const kana = Array.from(reading);
+  let result = '';
+  for (let index = 0; index < kana.length; index += 1) {
+    const pair = kana[index] + (kana[index + 1] ?? '');
+    if (COMBINED_ROMAJI[pair]) {
+      result += COMBINED_ROMAJI[pair];
+      index += 1;
+    } else if (kana[index] === 'っ' && kana[index + 1]) {
+      const next = ROMAJI_BY_KANA[kana[index + 1]] ?? '';
+      result += next[0] === 'c' ? 't' : next[0];
+    } else {
+      result += ROMAJI_BY_KANA[kana[index]] ?? kana[index];
+    }
+  }
+  return result;
+}
+
 export const VOCABULARY: VocabularyItem[] = [
   { id: 'v-hello', japanese: 'こんにちは', reading: 'こんにちは', meaning: 'hello; good afternoon', partOfSpeech: 'greeting', exampleJapanese: 'こんにちは、ゆきさん。', exampleReading: 'こんにちは、ゆきさん。', exampleMeaning: 'Hello, Yuki.' },
   { id: 'v-thanks', japanese: 'ありがとう', reading: 'ありがとう', meaning: 'thank you', partOfSpeech: 'expression' },
   { id: 'v-goodbye', japanese: 'さようなら', reading: 'さようなら', meaning: 'goodbye', partOfSpeech: 'expression' },
-  { id: 'v-water', japanese: 'みず', reading: 'みず', meaning: 'water', partOfSpeech: 'noun', exampleJapanese: 'みずを のみます。', exampleReading: 'みずを のみます。', exampleMeaning: 'I drink water.' },
+  { id: 'v-water', japanese: 'みず', reading: 'みず', kanji: '水', meaning: 'water', partOfSpeech: 'noun', exampleJapanese: 'みずを のみます。', exampleReading: 'みずを のみます。', exampleMeaning: 'I drink water.' },
   { id: 'v-tea', japanese: 'おちゃ', reading: 'おちゃ', meaning: 'tea', partOfSpeech: 'noun' },
   { id: 'v-rice', japanese: 'ごはん', reading: 'ごはん', meaning: 'rice; meal', partOfSpeech: 'noun' },
   { id: 'v-cat', japanese: 'ねこ', reading: 'ねこ', meaning: 'cat', partOfSpeech: 'noun' },
   { id: 'v-dog', japanese: 'いぬ', reading: 'いぬ', meaning: 'dog', partOfSpeech: 'noun' },
-  { id: 'v-person', japanese: 'ひと', reading: 'ひと', meaning: 'person', partOfSpeech: 'noun' },
+  { id: 'v-person', japanese: 'ひと', reading: 'ひと', kanji: '人', meaning: 'person', partOfSpeech: 'noun' },
   { id: 'v-house', japanese: 'いえ', reading: 'いえ', meaning: 'house; home', partOfSpeech: 'noun' },
   { id: 'v-book', japanese: 'ほん', reading: 'ほん', meaning: 'book', partOfSpeech: 'noun' },
   { id: 'v-flower', japanese: 'はな', reading: 'はな', meaning: 'flower', partOfSpeech: 'noun' },
@@ -53,7 +98,14 @@ export const VOCABULARY: VocabularyItem[] = [
   { id: 'v-one', japanese: 'いち', reading: 'いち', meaning: 'one', partOfSpeech: 'number' },
   { id: 'v-two', japanese: 'に', reading: 'に', meaning: 'two', partOfSpeech: 'number' },
   { id: 'v-three', japanese: 'さん', reading: 'さん', meaning: 'three', partOfSpeech: 'number' },
-];
+].map((word: VocabularyItem) => ({
+  ...word,
+  romaji: word.romaji ?? kanaToRomaji(word.reading),
+  wordType: word.wordType ?? word.partOfSpeech,
+  tags: word.tags ?? ['A1', word.partOfSpeech ?? 'vocabulary'],
+  exampleSentence: word.exampleSentence ?? word.exampleJapanese,
+  exampleTranslation: word.exampleTranslation ?? word.exampleMeaning,
+}));
 
 export const STORIES: Story[] = [
   {
@@ -135,6 +187,7 @@ export const STUDY_CARDS: StudyCard[] = [
     front: word.japanese,
     reading: word.reading,
     meaning: word.meaning,
+    kanji: word.kanji,
     exampleJapanese: word.exampleJapanese,
     exampleMeaning: word.exampleMeaning,
     audioRef: word.audioRef,

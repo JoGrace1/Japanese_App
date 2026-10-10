@@ -6,9 +6,12 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { IdeaButton } from './src/components/DesignSystem';
+import { JapaneseKeyboard } from './src/components/JapaneseKeyboard';
 import {
   DECORATIONS,
   HIRAGANA,
@@ -27,27 +30,19 @@ import {
   WordHuntPosition,
 } from './src/game/wordHunt';
 import { isDue, localDateKey } from './src/review/scheduling';
+import { AnswerKind, checkAnswer } from './src/review/answerChecking';
 import { useProgress } from './src/storage/useProgress';
+import { TOKENS } from './src/theme';
 import { KanaScript, ReviewRating, Story, StudyCard, VocabularyItem } from './src/types';
 
-export type Section = 'home' | 'game' | 'cards' | 'stories' | 'garden' | 'progress';
-type CardCategory = 'Due' | 'New' | 'Learned';
+export type Section = 'home' | 'game' | 'cards' | 'stories' | 'garden' | 'progress' | 'more';
+type CardCategory = 'Due' | 'New' | 'Relearn' | 'Difficult' | 'All';
 type CardDeck = 'Main deck' | 'Word Hunt';
+type CardDirection = 'meaning' | 'japanese' | 'reading';
 const WORD_HUNT_ROUND_SECONDS = 60;
 
-const COLORS = {
-  ink: '#44363D',
-  muted: '#8C7C81',
-  pink: '#D98091',
-  pinkLight: '#F8E6E9',
-  cream: '#FFF9F1',
-  paper: '#FFFFFF',
-  green: '#668B72',
-  greenLight: '#E7F0E8',
-  gold: '#D2A34C',
-  border: '#F0E5DF',
-  lavender: '#EEE8F5',
-};
+const COLORS = TOKENS.colors;
+const ALL_SESSION_CARD_LIMIT = 10;
 
 function todayCount(progress: ReturnType<typeof useProgress>['progress']): number {
   return Object.values(progress.reviews).filter((review) => isDue(review)).length;
@@ -70,13 +65,30 @@ function chooseSessionCards(
   progress: ReturnType<typeof useProgress>['progress'],
   cards: StudyCard[],
 ): string[] {
+  const difficultIds = new Set(progress.reviewHistory
+    .filter((event) => event.rating === 'again' || event.rating === 'hard' || event.answerCorrect === false)
+    .map((event) => event.cardId));
   const filtered = cards.filter((card) => {
     const record = progress.reviews[card.id];
     if (category === 'Due') return isDue(record);
     if (category === 'New') return !record;
-    return Boolean(record && record.successes >= 3);
+    if (category === 'Relearn') return Boolean(record);
+    if (category === 'Difficult') return Boolean(record && ((record.lapseCount ?? 0) > 0 || difficultIds.has(card.id)));
+    return true;
   });
-  return filtered.slice(0, 8).map((card) => card.id);
+  if (category === 'Due') {
+    filtered.sort((left, right) =>
+      new Date(progress.reviews[left.id]?.dueAt ?? 0).getTime()
+      - new Date(progress.reviews[right.id]?.dueAt ?? 0).getTime());
+  }
+  if (category === 'All') {
+    for (let index = filtered.length - 1; index > 0; index -= 1) {
+      const swapIndex = Math.floor(Math.random() * (index + 1));
+      [filtered[index], filtered[swapIndex]] = [filtered[swapIndex], filtered[index]];
+    }
+    return filtered.slice(0, ALL_SESSION_CARD_LIMIT).map((card) => card.id);
+  }
+  return filtered.map((card) => card.id);
 }
 
 export function LoadingScreen() {
@@ -216,7 +228,7 @@ export function GameScreen({
 }: {
   wordHuntWords: VocabularyItem[];
   saveWords: (words: VocabularyItem[]) => void;
-  awardActivity: (petals: number) => void;
+  awardActivity: (petals: number, level?: number, studyTimeSeconds?: number) => void;
   onHome: () => void;
 }) {
   const [script, setScript] = useState<KanaScript>('hiragana');
@@ -419,18 +431,23 @@ export function FlashcardsScreen({
   awardActivity,
 }: {
   progress: ReturnType<typeof useProgress>['progress'];
-  recordReview: (cardId: string, rating: ReviewRating) => void;
-  awardActivity: (petals: number) => void;
+  recordReview: (cardId: string, rating: ReviewRating, answerCorrect?: boolean, answer?: string) => void;
+  awardActivity: (petals: number, level?: number, studyTimeSeconds?: number) => void;
 }) {
   const [deck, setDeck] = useState<CardDeck>('Main deck');
   const [category, setCategory] = useState<CardCategory>('Due');
+  const [direction, setDirection] = useState<CardDirection>('meaning');
   const [queue, setQueue] = useState<string[]>([]);
   const [sessionActive, setSessionActive] = useState(false);
   const [revealed, setRevealed] = useState(false);
+  const [answer, setAnswer] = useState('');
+  const [answerCorrect, setAnswerCorrect] = useState<boolean | null>(null);
+  const [keyboardScript, setKeyboardScript] = useState<KanaScript>('hiragana');
   const [againCounts, setAgainCounts] = useState<Record<string, number>>({});
   const [sessionTotal, setSessionTotal] = useState(0);
   const [answered, setAnswered] = useState(0);
   const [successful, setSuccessful] = useState(0);
+  const sessionStartedAt = useRef<number | null>(null);
   const deckCards: StudyCard[] = deck === 'Main deck'
     ? STUDY_CARDS
     : progress.wordHuntWords.map((word) => ({
@@ -441,13 +458,34 @@ export function FlashcardsScreen({
       meaning: word.meaning,
     }));
   const cardById = useMemo(() => new Map(deckCards.map((card) => [card.id, card])), [deckCards]);
-  const due = deckCards.filter((card) => isDue(progress.reviews[card.id])).length;
-  const fresh = deckCards.filter((card) => !progress.reviews[card.id]).length;
-  const learned = deckCards.filter((card) => (progress.reviews[card.id]?.successes ?? 0) >= 3).length;
+  const questionCards = direction === 'meaning' ? deckCards : deckCards.filter((card) => card.type === 'vocabulary');
+  const due = questionCards.filter((card) => isDue(progress.reviews[card.id])).length;
+  const fresh = questionCards.filter((card) => !progress.reviews[card.id]).length;
+  const difficultCardIds = new Set(progress.reviewHistory
+    .filter((event) => event.rating === 'again' || event.rating === 'hard' || event.answerCorrect === false)
+    .map((event) => event.cardId));
+  const difficult = questionCards.filter((card) =>
+    (progress.reviews[card.id]?.lapseCount ?? 0) > 0 || difficultCardIds.has(card.id)).length;
+  const introduced = questionCards.filter((card) => Boolean(progress.reviews[card.id])).length;
   const currentCard = queue.length ? cardById.get(queue[0]) : undefined;
+  const activeDirection = currentCard?.type === 'kana' ? 'meaning' : direction;
+  const answerKind: AnswerKind = activeDirection === 'meaning'
+    ? 'meaning'
+    : activeDirection === 'reading' ? 'reading' : 'japanese';
+  const question = !currentCard ? '' : activeDirection === 'meaning'
+    ? currentCard.front
+    : activeDirection === 'japanese'
+      ? currentCard.meaning
+      : currentCard.kanji ?? currentCard.front;
+  const expectedAnswer: string | string[] = !currentCard ? '' : activeDirection === 'meaning'
+    ? currentCard.meaning.split(';').map((part) => part.trim())
+    : activeDirection === 'reading'
+      ? currentCard.reading
+      : [currentCard.front, ...(currentCard.kanji ? [currentCard.kanji] : [])];
+  const expectsJapanese = activeDirection !== 'meaning';
 
   const startSession = () => {
-    const nextQueue = chooseSessionCards(category, progress, deckCards);
+    const nextQueue = chooseSessionCards(category, progress, questionCards);
     setQueue(nextQueue);
     setSessionTotal(nextQueue.length);
     setAnswered(0);
@@ -455,16 +493,31 @@ export function FlashcardsScreen({
     setAgainCounts({});
     setSessionActive(true);
     setRevealed(false);
+    setAnswer('');
+    setAnswerCorrect(null);
+    sessionStartedAt.current = Date.now();
+  };
+
+  const submitAnswer = () => {
+    if (!currentCard || !answer.trim()) return;
+    const correct = checkAnswer(answer, expectedAnswer, {
+      kind: answerKind,
+      script: activeDirection === 'reading' ? 'hiragana' : undefined,
+    });
+    setAnswerCorrect(correct);
+    setRevealed(true);
   };
 
   const rateCurrent = (rating: ReviewRating) => {
     if (!currentCard) return;
     const [currentId, ...remaining] = queue;
-    recordReview(currentId, rating);
+    recordReview(currentId, rating, answerCorrect ?? undefined, answer || undefined);
     const nextSuccessful = successful + (rating === 'again' ? 0 : 1);
     setSuccessful(nextSuccessful);
     setAnswered((value) => value + 1);
     setRevealed(false);
+    setAnswer('');
+    setAnswerCorrect(null);
     let nextQueue: string[];
     if (rating === 'again') {
       const attempts = againCounts[currentId] ?? 0;
@@ -478,7 +531,13 @@ export function FlashcardsScreen({
       nextQueue = remaining;
     }
     setQueue(nextQueue);
-    if (nextQueue.length === 0) awardActivity(3);
+    if (nextQueue.length === 0) {
+      const studyTimeSeconds = sessionStartedAt.current === null
+        ? 0
+        : Math.floor((Date.now() - sessionStartedAt.current) / 1000);
+      awardActivity(3, undefined, studyTimeSeconds);
+      sessionStartedAt.current = null;
+    }
   };
 
   return (
@@ -503,8 +562,9 @@ export function FlashcardsScreen({
         ))}
       </View>
       <View style={styles.categoryRow}>
-        {(['Due', 'New', 'Learned'] as CardCategory[]).map((item) => {
-          const count = item === 'Due' ? due : item === 'New' ? fresh : learned;
+        {(['Due', 'New', 'Relearn', 'Difficult', 'All'] as CardCategory[]).map((item) => {
+          const count = item === 'Due' ? due : item === 'New' ? fresh
+            : item === 'Relearn' ? introduced : item === 'Difficult' ? difficult : questionCards.length;
           return (
             <Pressable key={item} onPress={() => { setCategory(item); setSessionActive(false); setQueue([]); }} style={[styles.categoryChip, category === item && styles.categoryChipActive]}>
               <Text style={[styles.categoryName, category === item && styles.categoryNameActive]}>{item}</Text>
@@ -513,21 +573,93 @@ export function FlashcardsScreen({
           );
         })}
       </View>
+      {!sessionActive ? (
+        <View style={styles.directionCard}>
+          <Text style={styles.noteTitle}>Question type</Text>
+          <View style={styles.directionRow}>
+            {([
+              ['meaning', 'Japanese → English'],
+              ['japanese', 'English → Japanese'],
+              ['reading', 'Reading'],
+            ] as [CardDirection, string][]).map(([item, label]) => (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ selected: direction === item }}
+                key={item}
+                onPress={() => setDirection(item)}
+                style={[styles.directionButton, direction === item && styles.directionButtonActive]}
+              >
+                <Text style={[styles.directionText, direction === item && styles.directionTextActive]}>{label}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={styles.sectionHelper}>One direction per session keeps related prompts from repeating together.</Text>
+        </View>
+      ) : null}
       {sessionActive && currentCard ? (
         <View>
           <View style={styles.sessionHeader}>
             <Text style={styles.sectionHelper}>Card {Math.min(answered + 1, sessionTotal)} of {sessionTotal}</Text>
             <Text style={styles.sectionHelper}>🌸 {successful} remembered</Text>
           </View>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              setSessionActive(false);
+              setQueue([]);
+              setRevealed(false);
+              sessionStartedAt.current = null;
+            }}
+            style={styles.stopSessionButton}
+          >
+            <Text style={styles.stopSessionText}>Stop session</Text>
+          </Pressable>
           <ProgressBar value={answered} maximum={Math.max(sessionTotal, 1)} />
           <View style={styles.flashcard}>
             <Text style={styles.cardType}>
               {deck === 'Word Hunt' ? 'WORD HUNT' : currentCard.type === 'kana' ? currentCard.kanaScript?.toUpperCase() : 'EVERYDAY JAPANESE'}
             </Text>
-            <Text style={styles.flashFront}>{currentCard.front}</Text>
+            <Text style={[styles.flashFront, activeDirection === 'japanese' && styles.englishPrompt]}>{question}</Text>
+            <Text style={styles.sectionHelper}>
+              {activeDirection === 'meaning' ? 'What does this mean?'
+                : activeDirection === 'japanese' ? 'Type the Japanese word'
+                  : 'Type its reading in hiragana'}
+            </Text>
+            {!revealed ? (
+              <>
+                <TextInput
+                  accessibilityLabel="Your answer"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  onChangeText={setAnswer}
+                  onSubmitEditing={submitAnswer}
+                  placeholder={expectsJapanese ? 'Enter your answer' : 'Type the meaning'}
+                  returnKeyType="done"
+                  style={styles.answerInput}
+                  value={answer}
+                />
+                {expectsJapanese ? (
+                  <JapaneseKeyboard
+                    script={activeDirection === 'reading' ? 'hiragana' : keyboardScript}
+                    onScriptChange={setKeyboardScript}
+                    onInsert={(character) => setAnswer((value) => value + character)}
+                    onBackspace={() => setAnswer((value) => Array.from(value).slice(0, -1).join(''))}
+                    onClear={() => setAnswer('')}
+                    onSubmit={submitAnswer}
+                  />
+                ) : null}
+                {answer.trim() ? <PrimaryButton title="Check answer" onPress={submitAnswer} /> : null}
+              </>
+            ) : null}
             {revealed ? (
               <>
+                {answerCorrect !== null ? (
+                  <Text style={[styles.answerFeedback, answerCorrect ? styles.answerCorrect : styles.answerIncorrect]}>
+                    {answerCorrect ? 'Correct answer!' : 'Not quite — keep practising.'}
+                  </Text>
+                ) : null}
                 <Text style={styles.flashReading}>{currentCard.reading}</Text>
+                {currentCard.kanji ? <Text style={styles.flashReading}>{currentCard.kanji}</Text> : null}
                 <Text style={styles.flashMeaning}>{currentCard.meaning}</Text>
                 {currentCard.exampleJapanese ? <Text style={styles.exampleText}>{currentCard.exampleJapanese}{currentCard.exampleMeaning ? `\n${currentCard.exampleMeaning}` : ''}</Text> : null}
               </>
@@ -538,23 +670,26 @@ export function FlashcardsScreen({
               <Text style={styles.audioIcon}>🔈</Text>
               <Text style={styles.audioText}>{currentCard.audioRef ? 'Audio available' : 'Audio pronunciation coming soon'}</Text>
             </View>
-            {!revealed ? <PrimaryButton title="Reveal answer" onPress={() => setRevealed(true)} /> : null}
+            {!revealed ? <SecondaryButton title="Show answer" onPress={() => setRevealed(true)} /> : null}
           </View>
           {revealed ? (
-            <View style={styles.ratingRow}>
-              {([
-                ['again', 'Again', '#F5DDDF'],
-                ['hard', 'Hard', '#F7E8CF'],
-                ['good', 'Good', '#E3EEDF'],
-                ['easy', 'Easy', '#E6E0F1'],
-              ] as [ReviewRating, string, string][]).map(([rating, label, color]) => (
-                <Pressable key={rating} onPress={() => rateCurrent(rating)} style={[styles.ratingButton, { backgroundColor: color }]}>
-                  <Text style={styles.ratingText}>{label}</Text>
-                </Pressable>
-              ))}
-            </View>
+            <>
+              <Text style={styles.ratingPrompt}>How easily did you remember it? Rate your recall, not just whether it was correct.</Text>
+              <View style={styles.ratingRow}>
+                {([
+                  ['again', 'Again', '#F5DDDF'],
+                  ['hard', 'Hard', '#F7E8CF'],
+                  ['good', 'Good', '#E3EEDF'],
+                  ['easy', 'Easy', '#E6E0F1'],
+                ] as [ReviewRating, string, string][]).map(([rating, label, color]) => (
+                  <Pressable key={rating} onPress={() => rateCurrent(rating)} style={[styles.ratingButton, { backgroundColor: color }]}>
+                    <Text style={styles.ratingText}>{label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </>
           ) : null}
-          <Text style={styles.sessionNote}>Again returns a card to this session, up to 3 tries. Unresolved cards stay in review.</Text>
+          <Text style={styles.sessionNote}>Learning steps: 1 minute, then 10 minutes. Good graduates in about 1 day; these intervals are configurable.</Text>
         </View>
       ) : sessionActive ? (
         <View style={styles.successCard}>
@@ -565,17 +700,19 @@ export function FlashcardsScreen({
         </View>
       ) : (
         <View style={styles.sessionStartCard}>
-          <Text style={styles.sessionEmoji}>{category === 'Due' ? '🍡' : category === 'New' ? '🌱' : '✨'}</Text>
+          <Text style={styles.sessionEmoji}>{category === 'Due' ? '🍡' : category === 'New' ? '🌱' : category === 'Difficult' ? '💪' : category === 'All' ? '🗂️' : '🔁'}</Text>
           <Text style={styles.sessionHeading}>{category} cards</Text>
           <Text style={styles.bodyText}>
             {deck === 'Word Hunt' && deckCards.length === 0 ? 'Words you discover in Kana Word Hunt will be collected here.'
               : category === 'Due' ? `${due} card${due === 1 ? '' : 's'} are ready for a little review.`
-              : category === 'New' ? `${fresh} new cards are waiting to meet you.`
-                : `${learned} cards have reached three successful reviews.`}
+              : category === 'New' ? `${fresh} new cards are waiting. Study as many as you like.`
+                : category === 'Relearn' ? `${introduced} previously introduced cards are ready to practise again.`
+                : category === 'Difficult' ? `${difficult} cards have at least one lapse and are ready to revisit.`
+                  : `Study up to ${ALL_SESSION_CARD_LIMIT} randomly selected cards from the ${questionCards.length} available in this deck and question type.`}
           </Text>
-          <Text style={styles.schedulingNote}>Again repeats in-session · Hard: ~12 hours · Good: 1 day, then grows · Easy: 4 days, then grows</Text>
-          {category !== 'Learned' ? <PrimaryButton title="Begin a short session" onPress={startSession} disabled={(category === 'Due' ? due : fresh) === 0} /> : null}
-          {category !== 'Learned' && (category === 'Due' ? due : fresh) === 0 && deckCards.length > 0 ? <Text style={styles.sectionHelper}>Nothing here right now. Choose another stack.</Text> : null}
+          <Text style={styles.schedulingNote}>Again returns in 1 minute · learning steps are 1 and 10 minutes · Good graduates in about 1 day · Easy graduates in 4 days.</Text>
+          <PrimaryButton title="Begin a study session" onPress={startSession} disabled={(category === 'Due' ? due : category === 'New' ? fresh : category === 'Relearn' ? introduced : category === 'Difficult' ? difficult : questionCards.length) === 0} />
+          {(category === 'Due' ? due : category === 'New' ? fresh : category === 'Relearn' ? introduced : category === 'Difficult' ? difficult : questionCards.length) === 0 ? <Text style={styles.sectionHelper}>Nothing here right now. Choose another stack.</Text> : null}
         </View>
       )}
       <View style={styles.noteCard}>
@@ -738,6 +875,13 @@ export function ProgressScreen({ progress }: { progress: ReturnType<typeof usePr
   const reviewValues = Object.values(progress.reviews);
   const introduced = reviewValues.length;
   const mastered = reviewValues.filter((item) => item.successes >= 3).length;
+  const learning = reviewValues.filter((item) => item.state === 'learning' || item.state === 'relearning').length;
+  const correctAnswers = progress.reviewHistory.filter((event) => event.answerCorrect === true).length;
+  const forgottenAnswers = progress.reviewHistory.filter((event) =>
+    event.rating === 'again' || event.answerCorrect === false).length;
+  const lastFailedReview = [...progress.reviewHistory].reverse().findIndex((event) =>
+    event.rating === 'again' || event.answerCorrect === false);
+  const consecutiveCorrect = lastFailedReview === -1 ? progress.reviewHistory.length : lastFailedReview;
   const learnedHiragana = HIRAGANA.filter((item) => (progress.reviews[item.id]?.successes ?? 0) >= 3).length;
   const introducedHiragana = HIRAGANA.filter((item) => progress.reviews[item.id]).length;
   const learnedKatakana = KATAKANA.filter((item) => (progress.reviews[item.id]?.successes ?? 0) >= 3).length;
@@ -747,6 +891,13 @@ export function ProgressScreen({ progress }: { progress: ReturnType<typeof usePr
   const todayActivity = progress.dailyActivity.find((activity) => activity.date === today);
   const reviewedToday = todayActivity?.successfulReviews ?? 0;
   const overallTotal = HIRAGANA.length + KATAKANA.length + VOCABULARY.length;
+  const studyMinutes = Math.floor(progress.dailyActivity.reduce((total, activity) =>
+    total + (activity.studyTimeSeconds ?? 0), 0) / 60);
+  const recentHistory = [...progress.reviewHistory].reverse().slice(0, 5);
+  const cardLabels = new Map([
+    ...STUDY_CARDS.map((card) => [card.id, `${card.front} · ${card.meaning}`] as [string, string]),
+    ...progress.wordHuntWords.map((word) => [word.id, `${word.japanese} · ${word.meaning}`] as [string, string]),
+  ]);
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -778,10 +929,27 @@ export function ProgressScreen({ progress }: { progress: ReturnType<typeof usePr
       <View style={styles.metricsGrid}>
         <MetricCard emoji="📚" value={`${learnedVocabulary}/${VOCABULARY.length}`} label="vocabulary mastered" />
         <MetricCard emoji="🗂️" value={`${due}`} label="flashcards due today" />
+        <MetricCard emoji="🌱" value={`${learning}`} label="currently learning" />
         <MetricCard emoji="📖" value={`${progress.storiesCompleted.length}/${STORIES.length}`} label="stories completed" />
         <MetricCard emoji="🔎" value={`${progress.wordHuntWords.length}`} label="Word Hunt words collected" />
         <MetricCard emoji="🔥" value={`${currentStreak(progress.dailyActivity.map((activity) => activity.date))} days`} label="current streak" />
         <MetricCard emoji="✨" value={`${Math.min(reviewedToday, progress.dailyGoal)}/${progress.dailyGoal}`} label="today's card goal" />
+        <MetricCard emoji="✅" value={`${correctAnswers}`} label="correct typed answers" />
+        <MetricCard emoji="💭" value={`${forgottenAnswers}`} label="forgotten or incorrect" />
+        <MetricCard emoji="⚡" value={`${consecutiveCorrect}`} label="consecutive correct reviews" />
+        <MetricCard emoji="⏱️" value={`${studyMinutes} min`} label="total completed study time" />
+      </View>
+      <SectionHeading title="Recent review history" helper="Answer results and recall ratings are saved separately" />
+      <View style={styles.reviewHistoryCard}>
+        {recentHistory.length ? recentHistory.map((event, index) => (
+          <View key={`${event.cardId}-${event.reviewedAt}-${index}`} style={styles.reviewHistoryLine}>
+            <View style={styles.reviewHistoryCopy}>
+              <Text style={styles.reviewHistoryWord}>{cardLabels.get(event.cardId) ?? event.cardId}</Text>
+              <Text style={styles.reviewHistoryDate}>{new Date(event.reviewedAt).toLocaleDateString()}</Text>
+            </View>
+            <Text style={styles.reviewHistoryRating}>{event.answerCorrect === undefined ? '' : event.answerCorrect ? '✓ ' : '× '}{event.rating}</Text>
+          </View>
+        )) : <Text style={styles.sectionHelper}>Review a card to start building your history.</Text>}
       </View>
       <View style={styles.noteCard}>
         <Text style={styles.noteTitle}>What do these numbers mean?</Text>
@@ -819,213 +987,225 @@ function MetricCard({ emoji, value, label }: { emoji: string; value: string; lab
 function PrimaryButton({
   title, onPress, disabled = false,
 }: { title: string; onPress: () => void; disabled?: boolean }) {
-  return (
-    <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.primaryButton, disabled && styles.buttonDisabled, pressed && !disabled && styles.pressed]}>
-      <Text style={styles.primaryButtonText}>{title}</Text>
-    </Pressable>
-  );
+  return <IdeaButton title={title} onPress={onPress} variant="primary" disabled={disabled} />;
 }
 
 function SecondaryButton({
   title, onPress, disabled = false,
 }: { title: string; onPress: () => void; disabled?: boolean }) {
-  return (
-    <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.secondaryButton, disabled && styles.buttonDisabled, pressed && !disabled && styles.pressed]}>
-      <Text style={styles.secondaryButtonText}>{title}</Text>
-    </Pressable>
-  );
+  return <IdeaButton title={title} onPress={onPress} variant="secondary" disabled={disabled} />;
 }
 
 const styles = StyleSheet.create({
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.cream, gap: 12 },
-  loadingText: { color: COLORS.muted, fontSize: 14 },
-  content: { paddingHorizontal: 20, paddingTop: 14, paddingBottom: 28 },
+  loadingText: { color: COLORS.navy, fontSize: 14, fontWeight: '700' },
+  content: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 32, backgroundColor: COLORS.cream },
   screenTitle: { marginBottom: 20 },
-  eyebrow: { color: COLORS.pink, fontSize: 10, fontWeight: '800', letterSpacing: 1.4, marginBottom: 6 },
-  title: { color: COLORS.ink, fontSize: 29, lineHeight: 35, fontWeight: '800' },
+  eyebrow: { color: COLORS.pink, fontSize: 10, fontWeight: '800', letterSpacing: 1.6, marginBottom: 6 },
+  title: { color: COLORS.navy, fontSize: 29, lineHeight: 35, fontWeight: '800' },
   subtitle: { color: COLORS.muted, fontSize: 13, marginTop: 4, lineHeight: 19 },
   homeTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 },
-  homeGreeting: { color: COLORS.ink, fontSize: 23, lineHeight: 30, fontWeight: '800' },
-  streakPill: { backgroundColor: '#FFF0D3', borderRadius: 18, paddingHorizontal: 12, paddingVertical: 8 },
-  streakText: { color: '#875B16', fontSize: 12, fontWeight: '700' },
-  heroCard: { backgroundColor: '#728E77', borderRadius: 24, padding: 19, marginBottom: 23 },
+  homeGreeting: { color: COLORS.navy, fontSize: 24, lineHeight: 30, fontWeight: '800' },
+  streakPill: { backgroundColor: '#FDECC8', borderRadius: 18, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: '#F6D18A' },
+  streakText: { color: '#8A5D13', fontSize: 12, fontWeight: '800' },
+  heroCard: { backgroundColor: '#253B69', borderRadius: 28, padding: 19, marginBottom: 23, borderWidth: 1, borderColor: '#355584', shadowColor: COLORS.navy, shadowOpacity: 0.18, shadowRadius: 20, elevation: 8 },
   heroTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  heroKicker: { color: '#E5F1E4', fontWeight: '800', fontSize: 9, letterSpacing: 1.2 },
-  heroHeading: { color: '#FFFFFF', fontSize: 20, fontWeight: '800', marginTop: 5 },
-  heroCopy: { color: '#E2ECDC', fontSize: 12, marginTop: 4 },
+  heroKicker: { color: '#D7E9FF', fontWeight: '800', fontSize: 9, letterSpacing: 1.5 },
+  heroHeading: { color: '#FFFFFF', fontSize: 22, fontWeight: '800', marginTop: 5 },
+  heroCopy: { color: '#E7EDFF', fontSize: 12, marginTop: 4 },
   heroFlower: { fontSize: 38 },
   heroStats: { flexDirection: 'row', alignItems: 'center', marginVertical: 16 },
   heroStat: { color: '#FFFFFF', fontSize: 22, fontWeight: '800' },
   heroStatSmall: { fontSize: 13, fontWeight: '600' },
-  heroStatLabel: { color: '#E5F1E4', fontSize: 10, marginTop: 3 },
-  heroStatDivider: { width: 1, height: 35, backgroundColor: '#A9BDAA', marginHorizontal: 23 },
+  heroStatLabel: { color: '#E7EDFF', fontSize: 10, marginTop: 3 },
+  heroStatDivider: { width: 1, height: 35, backgroundColor: '#9FB6D8', marginHorizontal: 23 },
   heroDue: { flex: 1 },
-  progressTrack: { height: 7, backgroundColor: '#F0E8E4', borderRadius: 8, overflow: 'hidden' },
-  progressFill: { height: '100%', borderRadius: 8 },
+  progressTrack: { height: 8, backgroundColor: '#F4E7EB', borderRadius: 12, overflow: 'hidden' },
+  progressFill: { height: '100%', borderRadius: 12 },
   goalRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 9 },
   sectionHeading: { marginTop: 3, marginBottom: 12 },
-  sectionTitle: { color: COLORS.ink, fontSize: 17, fontWeight: '800' },
+  sectionTitle: { color: COLORS.navy, fontSize: 17, fontWeight: '800' },
   sectionHelper: { color: COLORS.muted, fontSize: 11, marginTop: 3 },
   quickGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 23 },
-  quickCard: { width: '48%', minHeight: 116, borderRadius: 19, padding: 14, justifyContent: 'center' },
+  quickCard: { width: '48%', minHeight: 116, borderRadius: 22, padding: 14, justifyContent: 'center', borderWidth: 1, borderColor: '#F2E8F5' },
   quickEmoji: { fontSize: 23, marginBottom: 7 },
-  quickTitle: { color: COLORS.ink, fontSize: 13, fontWeight: '800' },
+  quickTitle: { color: COLORS.navy, fontSize: 13, fontWeight: '800' },
   quickDetail: { color: COLORS.muted, fontSize: 10, marginTop: 3 },
-  pressed: { opacity: 0.78, transform: [{ scale: 0.98 }] },
-  gardenPreview: { borderRadius: 22, backgroundColor: '#E5F0E7', overflow: 'hidden', minHeight: 165, marginBottom: 12 },
+  pressed: { opacity: 0.82, transform: [{ scale: 0.98 }] },
+  gardenPreview: { borderRadius: 24, backgroundColor: '#DDEEE7', overflow: 'hidden', minHeight: 170, marginBottom: 12, borderWidth: 1, borderColor: '#CFE7D9' },
   gardenCloud: { position: 'absolute', top: 11, right: 24, fontSize: 24 },
   gardenScene: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-around', height: 116, paddingHorizontal: 22, paddingTop: 24 },
   sceneTree: { fontSize: 42 },
   sceneHouse: { fontSize: 62 },
   scenePlant: { fontSize: 36 },
   sceneLantern: { fontSize: 28 },
-  gardenCaption: { backgroundColor: '#FFFFFFB8', paddingVertical: 10, paddingHorizontal: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  gardenCaptionTitle: { color: COLORS.ink, fontWeight: '700', fontSize: 12 },
-  gardenCaptionText: { color: COLORS.green, fontSize: 11, fontWeight: '700' },
-  gameIntro: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: COLORS.pinkLight, borderRadius: 15, padding: 13, marginBottom: 15 },
+  gardenCaption: { backgroundColor: '#FFFFFFC9', paddingVertical: 10, paddingHorizontal: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  gardenCaptionTitle: { color: COLORS.navy, fontWeight: '700', fontSize: 12 },
+  gardenCaptionText: { color: COLORS.sage, fontSize: 11, fontWeight: '800' },
+  gameIntro: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#FDE8EE', borderRadius: 18, padding: 13, marginBottom: 15, borderWidth: 1, borderColor: '#F7C9D7' },
   gameIntroIcon: { fontSize: 24 },
-  gameIntroText: { flex: 1, color: COLORS.ink, fontSize: 11, lineHeight: 17 },
+  gameIntroText: { flex: 1, color: COLORS.navy, fontSize: 11, lineHeight: 17 },
   bold: { fontWeight: '800' },
   scriptRow: { flexDirection: 'row', gap: 9, marginTop: 3, marginBottom: 12 },
-  scriptButton: { flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: 13, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: COLORS.border },
-  scriptButtonActive: { backgroundColor: COLORS.greenLight, borderColor: COLORS.green },
+  scriptButton: { flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: 15, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: COLORS.border },
+  scriptButtonActive: { backgroundColor: '#EAF8F1', borderColor: COLORS.sage },
   scriptButtonText: { color: COLORS.muted, fontSize: 12, fontWeight: '700' },
-  scriptButtonTextActive: { color: COLORS.green },
-  gameStatus: { backgroundColor: COLORS.paper, borderRadius: 17, padding: 14, flexDirection: 'row', justifyContent: 'space-around', marginBottom: 13, borderWidth: 1, borderColor: COLORS.border },
+  scriptButtonTextActive: { color: COLORS.navy },
+  gameStatus: { backgroundColor: '#FFFFFF', borderRadius: 20, padding: 14, flexDirection: 'row', justifyContent: 'space-around', marginBottom: 13, borderWidth: 1, borderColor: COLORS.border, shadowColor: COLORS.navy, shadowOpacity: 0.08, shadowRadius: 12, elevation: 3 },
   gameLabel: { color: COLORS.muted, fontSize: 9, fontWeight: '800', letterSpacing: 1, textAlign: 'center' },
-  gameValue: { color: COLORS.ink, fontSize: 18, fontWeight: '800', textAlign: 'center', marginTop: 4 },
+  gameValue: { color: COLORS.navy, fontSize: 18, fontWeight: '800', textAlign: 'center', marginTop: 4 },
   timerUrgent: { color: '#C64D5E' },
-  board: { alignSelf: 'center', marginTop: 18, padding: 8, backgroundColor: '#F3E4E7', borderRadius: 18, gap: 5 },
-  boardRow: { flexDirection: 'row', gap: 5 },
-  tile: { width: 46, height: 46, borderRadius: 12, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#FFFFFFA0' },
+  board: { alignSelf: 'center', marginTop: 18, padding: 10, backgroundColor: '#17294B', borderRadius: 22, gap: 6, borderWidth: 1, borderColor: '#2B4478' },
+  boardRow: { flexDirection: 'row', gap: 6 },
+  tile: { width: 46, height: 46, borderRadius: 13, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#FFFFFFA0' },
   tileTone0: { backgroundColor: '#F8DDE2' },
-  tileTone1: { backgroundColor: '#DFEEDC' },
-  tileTone2: { backgroundColor: '#F7EBCF' },
-  tileTone3: { backgroundColor: '#E9E1F2' },
+  tileTone1: { backgroundColor: '#DDEEE7' },
+  tileTone2: { backgroundColor: '#F8EFCF' },
+  tileTone3: { backgroundColor: '#E9E1F9' },
   tileSelected: { borderColor: COLORS.pink, transform: [{ scale: 1.08 }] },
-  tileText: { color: COLORS.ink, fontSize: 24, fontWeight: '700' },
+  tileText: { color: COLORS.navy, fontSize: 24, fontWeight: '700' },
   centerHint: { color: COLORS.muted, textAlign: 'center', fontSize: 11, marginTop: 10, marginBottom: 9 },
   wordActionRow: { flexDirection: 'row', gap: 9, alignItems: 'center' },
   wordMessage: { color: COLORS.green, fontSize: 11, fontWeight: '700', textAlign: 'center', marginTop: 8 },
-  foundWordsCard: { backgroundColor: COLORS.paper, borderRadius: 16, padding: 14, marginTop: 14, borderWidth: 1, borderColor: COLORS.border },
+  foundWordsCard: { backgroundColor: '#FFFFFF', borderRadius: 18, padding: 14, marginTop: 14, borderWidth: 1, borderColor: COLORS.border },
   foundWordLine: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: '#F5EFEC' },
-  foundWordJapanese: { color: COLORS.ink, fontSize: 14, fontWeight: '800', minWidth: 80 },
+  foundWordJapanese: { color: COLORS.navy, fontSize: 14, fontWeight: '800', minWidth: 80 },
   foundWordMeaning: { color: COLORS.muted, flex: 1, fontSize: 11 },
-  successCard: { alignItems: 'center', backgroundColor: COLORS.greenLight, borderRadius: 20, padding: 20, marginTop: 16 },
+  successCard: { alignItems: 'center', backgroundColor: '#EAF7EE', borderRadius: 22, padding: 20, marginTop: 16, borderWidth: 1, borderColor: '#CFE9D6' },
   successEmoji: { fontSize: 38, marginBottom: 6 },
-  successTitle: { color: COLORS.ink, fontSize: 21, fontWeight: '800' },
+  successTitle: { color: COLORS.navy, fontSize: 21, fontWeight: '800' },
   bodyText: { color: COLORS.muted, fontSize: 12, textAlign: 'center', lineHeight: 18, marginTop: 6, marginBottom: 12 },
-  primaryButton: { backgroundColor: COLORS.pink, borderRadius: 14, paddingHorizontal: 17, paddingVertical: 13, alignItems: 'center', marginTop: 12, minHeight: 44, justifyContent: 'center' },
+  primaryButton: { backgroundColor: COLORS.pink, borderRadius: 16, paddingHorizontal: 17, paddingVertical: 13, alignItems: 'center', marginTop: 12, minHeight: 44, justifyContent: 'center', shadowColor: COLORS.navy, shadowOpacity: 0.12, shadowRadius: 12, elevation: 5 },
   primaryButtonText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800', textAlign: 'center' },
-  secondaryButton: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: COLORS.border, borderRadius: 13, paddingHorizontal: 13, paddingVertical: 10, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
-  secondaryButtonText: { color: COLORS.ink, fontSize: 11, fontWeight: '700', textAlign: 'center' },
+  secondaryButton: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: COLORS.border, borderRadius: 14, paddingHorizontal: 13, paddingVertical: 10, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
+  secondaryButtonText: { color: COLORS.navy, fontSize: 11, fontWeight: '700', textAlign: 'center' },
   buttonDisabled: { opacity: 0.48 },
   deckSelector: { flexDirection: 'row', gap: 8, marginBottom: 12 },
-  deckOption: { flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: 13, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: COLORS.border },
-  deckOptionActive: { backgroundColor: COLORS.lavender, borderColor: '#C9BADB' },
+  deckOption: { flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: 15, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: COLORS.border },
+  deckOptionActive: { backgroundColor: '#F0E9FF', borderColor: '#CFBDF8' },
   deckOptionText: { color: COLORS.muted, fontSize: 11, fontWeight: '700' },
-  deckOptionTextActive: { color: COLORS.ink },
-  categoryRow: { flexDirection: 'row', gap: 8, marginBottom: 17 },
-  categoryChip: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6, paddingVertical: 10, backgroundColor: '#FFFFFF', borderRadius: 13, borderWidth: 1, borderColor: COLORS.border },
+  deckOptionTextActive: { color: COLORS.navy },
+  categoryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 17 },
+  categoryChip: { flexGrow: 1, flexBasis: '28%', minWidth: 80, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6, paddingVertical: 10, backgroundColor: '#FFFFFF', borderRadius: 14, borderWidth: 1, borderColor: COLORS.border },
   categoryChipActive: { backgroundColor: COLORS.pink, borderColor: COLORS.pink },
-  categoryName: { color: COLORS.ink, fontSize: 11, fontWeight: '700' },
+  categoryName: { color: COLORS.navy, fontSize: 11, fontWeight: '700' },
   categoryNameActive: { color: '#FFFFFF' },
   categoryCount: { color: COLORS.muted, fontSize: 10, fontWeight: '700' },
+  directionCard: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 12, marginBottom: 15, borderWidth: 1, borderColor: COLORS.border },
+  directionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginVertical: 8 },
+  directionButton: { flexGrow: 1, alignItems: 'center', paddingVertical: 9, paddingHorizontal: 8, borderRadius: 10, backgroundColor: '#F7F3F0' },
+  directionButtonActive: { backgroundColor: '#81566B' },
+  directionText: { color: COLORS.muted, fontSize: 10, fontWeight: '700' },
+  directionTextActive: { color: '#FFFFFF' },
   sessionHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
-  flashcard: { backgroundColor: '#FFFFFF', borderRadius: 22, padding: 21, alignItems: 'center', minHeight: 265, justifyContent: 'center', marginTop: 15, borderWidth: 1, borderColor: COLORS.border },
+  stopSessionButton: { alignSelf: 'flex-end', paddingVertical: 5, paddingHorizontal: 8, marginBottom: 4 },
+  stopSessionText: { color: COLORS.muted, fontSize: 10, fontWeight: '700' },
+  flashcard: { backgroundColor: '#FFFFFF', borderRadius: 26, padding: 21, alignItems: 'center', minHeight: 270, justifyContent: 'center', marginTop: 15, borderWidth: 1, borderColor: COLORS.border, shadowColor: COLORS.navy, shadowOpacity: 0.08, shadowRadius: 18, elevation: 4 },
   cardType: { color: COLORS.pink, fontSize: 9, fontWeight: '800', letterSpacing: 1.3 },
-  flashFront: { color: COLORS.ink, fontSize: 62, fontWeight: '600', marginTop: 16, marginBottom: 7 },
-  flashReading: { color: COLORS.green, fontSize: 18, fontWeight: '700' },
-  flashMeaning: { color: COLORS.ink, fontSize: 16, fontWeight: '700', textAlign: 'center', marginTop: 6 },
+  flashFront: { color: COLORS.navy, fontSize: 62, fontWeight: '600', marginTop: 16, marginBottom: 7 },
+  englishPrompt: { fontSize: 27, lineHeight: 34, textAlign: 'center' },
+  answerInput: { alignSelf: 'stretch', borderColor: COLORS.border, borderWidth: 1, borderRadius: 12, backgroundColor: '#FFFFFF', paddingHorizontal: 12, paddingVertical: 10, marginTop: 10, minHeight: 44, color: COLORS.navy, fontSize: 17, textAlign: 'center' },
+  answerFeedback: { fontSize: 13, fontWeight: '800', marginTop: 9 },
+  answerCorrect: { color: '#397A52' },
+  answerIncorrect: { color: '#B44E5C' },
+  flashReading: { color: COLORS.sage, fontSize: 18, fontWeight: '700' },
+  flashMeaning: { color: COLORS.navy, fontSize: 16, fontWeight: '700', textAlign: 'center', marginTop: 6 },
   exampleText: { color: COLORS.muted, fontSize: 12, textAlign: 'center', lineHeight: 18, marginTop: 12 },
-  audioPlaceholder: { flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: '#F7F4F1', borderRadius: 12, padding: 10, marginTop: 17, alignSelf: 'stretch' },
-  audioControl: { width: 27, height: 27, borderRadius: 14, backgroundColor: '#E7F0E8', alignItems: 'center', justifyContent: 'center' },
-  audioIcon: { color: COLORS.green, fontSize: 17 },
+  audioPlaceholder: { flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: '#F7F5F9', borderRadius: 14, padding: 10, marginTop: 17, alignSelf: 'stretch', borderWidth: 1, borderColor: '#EEE7F4' },
+  audioControl: { width: 30, height: 30, borderRadius: 15, backgroundColor: '#EAF8F1', alignItems: 'center', justifyContent: 'center' },
+  audioIcon: { color: COLORS.sage, fontSize: 17 },
   audioText: { flex: 1, color: COLORS.muted, fontSize: 10, lineHeight: 15 },
   ratingRow: { flexDirection: 'row', gap: 7, marginTop: 12 },
-  ratingButton: { flex: 1, borderRadius: 12, paddingVertical: 13, alignItems: 'center' },
-  ratingText: { color: COLORS.ink, fontSize: 11, fontWeight: '800' },
+  ratingPrompt: { color: COLORS.muted, fontSize: 11, textAlign: 'center', marginTop: 12 },
+  ratingButton: { flex: 1, borderRadius: 14, paddingVertical: 13, alignItems: 'center', borderWidth: 1, borderColor: '#FFFFFF' },
+  ratingText: { color: COLORS.navy, fontSize: 11, fontWeight: '800' },
   sessionNote: { color: COLORS.muted, fontSize: 10, lineHeight: 15, textAlign: 'center', marginTop: 12 },
-  sessionStartCard: { alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 20, padding: 21, borderWidth: 1, borderColor: COLORS.border },
+  sessionStartCard: { alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 22, padding: 21, borderWidth: 1, borderColor: COLORS.border },
   sessionEmoji: { fontSize: 36, marginBottom: 6 },
-  sessionHeading: { color: COLORS.ink, fontSize: 18, fontWeight: '800' },
-  schedulingNote: { backgroundColor: COLORS.cream, color: COLORS.muted, fontSize: 10, lineHeight: 15, textAlign: 'center', padding: 11, borderRadius: 12, marginBottom: 6 },
-  noteCard: { backgroundColor: '#F7F1EB', borderRadius: 16, padding: 15, marginTop: 18 },
-  noteTitle: { color: COLORS.ink, fontSize: 12, fontWeight: '800' },
+  sessionHeading: { color: COLORS.navy, fontSize: 18, fontWeight: '800' },
+  schedulingNote: { backgroundColor: '#FFF9F0', color: COLORS.muted, fontSize: 10, lineHeight: 15, textAlign: 'center', padding: 11, borderRadius: 12, marginBottom: 6, borderWidth: 1, borderColor: '#F6E7CF' },
+  noteCard: { backgroundColor: '#F8F2F9', borderRadius: 18, padding: 15, marginTop: 18, borderWidth: 1, borderColor: '#EFE2F8' },
+  noteTitle: { color: COLORS.navy, fontSize: 12, fontWeight: '800' },
   noteBody: { color: COLORS.muted, fontSize: 11, lineHeight: 17, marginTop: 5 },
   backLink: { paddingVertical: 4, marginBottom: 14, alignSelf: 'flex-start' },
-  backLinkText: { color: COLORS.green, fontSize: 12, fontWeight: '800' },
-  storyCard: { backgroundColor: '#FFFFFF', borderRadius: 18, flexDirection: 'row', overflow: 'hidden', marginBottom: 11, minHeight: 112, borderWidth: 1, borderColor: COLORS.border },
-  storyArt: { width: 98, backgroundColor: '#F8E5E7', justifyContent: 'center', alignItems: 'center' },
-  storyArtTea: { backgroundColor: '#F6EDDA' },
-  storyArtDog: { backgroundColor: '#E4EEE2' },
+  backLinkText: { color: COLORS.sage, fontSize: 12, fontWeight: '800' },
+  storyCard: { backgroundColor: '#FFFFFF', borderRadius: 20, flexDirection: 'row', overflow: 'hidden', marginBottom: 11, minHeight: 112, borderWidth: 1, borderColor: COLORS.border },
+  storyArt: { width: 98, backgroundColor: '#F8E5E7', justifyContent: 'center', alignItems: 'center', borderRightWidth: 1, borderRightColor: '#F2E7E8' },
+  storyArtTea: { backgroundColor: '#F4EED8' },
+  storyArtDog: { backgroundColor: '#E3F1E6' },
   storyArtEmoji: { fontSize: 40 },
   storyCardCopy: { flex: 1, padding: 13, justifyContent: 'center' },
-  storyTitle: { color: COLORS.ink, fontSize: 14, fontWeight: '800' },
+  storyTitle: { color: COLORS.navy, fontSize: 14, fontWeight: '800' },
   storyPreview: { color: COLORS.muted, fontSize: 11, marginTop: 4 },
-  storyStatus: { color: COLORS.green, fontSize: 10, fontWeight: '700', marginTop: 7 },
-  storyDetailCard: { backgroundColor: '#FFFFFF', borderRadius: 20, padding: 18, borderWidth: 1, borderColor: COLORS.border },
-  japaneseStory: { color: COLORS.ink, fontSize: 24, lineHeight: 40, fontWeight: '600' },
+  storyStatus: { color: COLORS.sage, fontSize: 10, fontWeight: '800', marginTop: 7 },
+  storyDetailCard: { backgroundColor: '#FFFFFF', borderRadius: 22, padding: 18, borderWidth: 1, borderColor: COLORS.border },
+  japaneseStory: { color: COLORS.navy, fontSize: 24, lineHeight: 40, fontWeight: '600' },
   storyHint: { color: COLORS.muted, fontSize: 10, marginTop: 8 },
   wordChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 12 },
-  wordChip: { backgroundColor: COLORS.greenLight, paddingVertical: 7, paddingHorizontal: 9, borderRadius: 11 },
-  wordChipSelected: { borderWidth: 1, borderColor: COLORS.green },
-  wordChipText: { color: COLORS.ink, fontSize: 11, fontWeight: '700' },
-  wordMeaning: { backgroundColor: '#F8F4EE', borderRadius: 12, padding: 11, marginTop: 10 },
-  wordMeaningJapanese: { color: COLORS.green, fontSize: 11, fontWeight: '700' },
-  wordMeaningText: { color: COLORS.ink, fontSize: 13, fontWeight: '700', marginTop: 3 },
-  translationText: { color: COLORS.ink, fontSize: 14, lineHeight: 20, marginTop: 12, textAlign: 'center' },
+  wordChip: { backgroundColor: '#EAF8F1', paddingVertical: 7, paddingHorizontal: 9, borderRadius: 12, borderWidth: 1, borderColor: '#D7EEE3' },
+  wordChipSelected: { borderColor: COLORS.sage },
+  wordChipText: { color: COLORS.navy, fontSize: 11, fontWeight: '700' },
+  wordMeaning: { backgroundColor: '#F9F5F3', borderRadius: 12, padding: 11, marginTop: 10 },
+  wordMeaningJapanese: { color: COLORS.sage, fontSize: 11, fontWeight: '700' },
+  wordMeaningText: { color: COLORS.navy, fontSize: 13, fontWeight: '700', marginTop: 3 },
+  translationText: { color: COLORS.navy, fontSize: 14, lineHeight: 20, marginTop: 12, textAlign: 'center' },
   audioCopy: { flex: 1 },
-  storyWordsCard: { backgroundColor: '#FFFFFF', borderRadius: 17, padding: 15, marginTop: 13, borderWidth: 1, borderColor: COLORS.border },
+  storyWordsCard: { backgroundColor: '#FFFFFF', borderRadius: 18, padding: 15, marginTop: 13, borderWidth: 1, borderColor: COLORS.border },
   vocabularyLine: { flexDirection: 'row', alignItems: 'center', paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: '#F5EFEC', gap: 8 },
-  vocabularyJapanese: { color: COLORS.ink, fontSize: 13, fontWeight: '800', minWidth: 78 },
-  vocabularyReading: { color: COLORS.green, fontSize: 10, minWidth: 85 },
+  vocabularyJapanese: { color: COLORS.navy, fontSize: 13, fontWeight: '800', minWidth: 78 },
+  vocabularyReading: { color: COLORS.sage, fontSize: 10, minWidth: 85 },
   vocabularyMeaning: { color: COLORS.muted, fontSize: 10, flex: 1 },
   gardenHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 },
-  petalsPill: { backgroundColor: '#F8E5E7', borderRadius: 15, paddingVertical: 9, paddingHorizontal: 13 },
-  petalsText: { color: '#9A5865', fontSize: 13, fontWeight: '800' },
-  gardenCanvas: { height: 255, backgroundColor: '#DCECE3', borderRadius: 23, overflow: 'hidden', position: 'relative', marginBottom: 15 },
+  petalsPill: { backgroundColor: '#F9E2E9', borderRadius: 16, paddingVertical: 9, paddingHorizontal: 13, borderWidth: 1, borderColor: '#F0C4D1' },
+  petalsText: { color: '#8C4C65', fontSize: 13, fontWeight: '800' },
+  gardenCanvas: { height: 255, backgroundColor: '#DDEEE7', borderRadius: 24, overflow: 'hidden', position: 'relative', marginBottom: 15, borderWidth: 1, borderColor: '#CFE6D9' },
   gardenSun: { position: 'absolute', top: 15, right: 19, fontSize: 25 },
   gardenCloudLeft: { position: 'absolute', top: 28, left: 18, fontSize: 22 },
   gardenBackPlants: { position: 'absolute', top: 81, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-around', fontSize: 27 },
-  gardenGround: { position: 'absolute', bottom: 0, height: 90, left: 0, right: 0, backgroundColor: '#C5DAB9' },
+  gardenGround: { position: 'absolute', bottom: 0, height: 90, left: 0, right: 0, backgroundColor: '#BFDDB0' },
   gardenSceneItems: { position: 'absolute', top: 87, left: 10, right: 10, height: 116, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'flex-end' },
   gardenObject: { alignItems: 'center', maxWidth: 95 },
   gardenObjectHouse: { transform: [{ translateY: 2 }] },
   gardenObjectEmoji: { fontSize: 44 },
-  gardenObjectName: { color: COLORS.ink, fontSize: 9, fontWeight: '700', backgroundColor: '#FFFFFFC9', paddingHorizontal: 6, borderRadius: 8, marginTop: 3 },
+  gardenObjectName: { color: COLORS.navy, fontSize: 9, fontWeight: '700', backgroundColor: '#FFFFFFC9', paddingHorizontal: 6, borderRadius: 8, marginTop: 3 },
   gardenGrass: { position: 'absolute', bottom: 7, alignSelf: 'center', fontSize: 19 },
-  gardenWelcome: { padding: 15, backgroundColor: '#FFFFFF', borderRadius: 17, marginBottom: 19 },
-  gardenWelcomeTitle: { color: COLORS.ink, fontSize: 14, fontWeight: '800' },
-  shopRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 15, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: COLORS.border },
+  gardenWelcome: { padding: 15, backgroundColor: '#FFFFFF', borderRadius: 18, marginBottom: 19, borderWidth: 1, borderColor: COLORS.border },
+  gardenWelcomeTitle: { color: COLORS.navy, fontSize: 14, fontWeight: '800' },
+  shopRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 18, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: COLORS.border },
   shopEmoji: { fontSize: 27, width: 43, textAlign: 'center' },
   shopCopy: { flex: 1, marginLeft: 6 },
-  shopName: { color: COLORS.ink, fontSize: 12, fontWeight: '800' },
+  shopName: { color: COLORS.navy, fontSize: 12, fontWeight: '800' },
   shopPrice: { color: COLORS.muted, fontSize: 10, marginTop: 3 },
-  overallCard: { backgroundColor: '#FFFFFF', borderRadius: 20, padding: 17, marginBottom: 20, borderWidth: 1, borderColor: COLORS.border },
+  overallCard: { backgroundColor: '#FFFFFF', borderRadius: 22, padding: 17, marginBottom: 20, borderWidth: 1, borderColor: COLORS.border, shadowColor: COLORS.navy, shadowOpacity: 0.07, shadowRadius: 15, elevation: 3 },
   overallHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  overallCount: { color: COLORS.ink, fontSize: 30, fontWeight: '800', marginVertical: 2 },
+  overallCount: { color: COLORS.navy, fontSize: 30, fontWeight: '800', marginVertical: 2 },
   overallOutOf: { color: COLORS.muted, fontSize: 15 },
   overallFlower: { fontSize: 33 },
-  learningRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 16, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: COLORS.border },
-  learningSymbol: { width: 43, height: 43, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.pinkLight, borderRadius: 13, marginRight: 12 },
-  learningSymbolText: { color: COLORS.ink, fontSize: 23, fontWeight: '700' },
+  learningRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 18, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: COLORS.border },
+  learningSymbol: { width: 43, height: 43, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FDE8EE', borderRadius: 14, marginRight: 12 },
+  learningSymbolText: { color: COLORS.navy, fontSize: 23, fontWeight: '700' },
   learningCopy: { flex: 1 },
   learningTopLine: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 7 },
-  learningName: { color: COLORS.ink, fontWeight: '800', fontSize: 12 },
+  learningName: { color: COLORS.navy, fontWeight: '800', fontSize: 12 },
   learningCount: { color: COLORS.muted, fontSize: 10 },
   learningIntroduced: { color: COLORS.muted, fontSize: 9, marginTop: 5 },
   comingSoonNote: { paddingHorizontal: 5, paddingTop: 2, paddingBottom: 16 },
   comingSoonText: { color: COLORS.muted, fontSize: 10, lineHeight: 15 },
-  kanjiRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8F4EE', borderRadius: 15, padding: 12, marginBottom: 8 },
-  kanjiCharacter: { color: COLORS.ink, fontSize: 30, fontWeight: '700', width: 48, textAlign: 'center' },
+  kanjiRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8F4EE', borderRadius: 17, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: '#F0E9E1' },
+  kanjiCharacter: { color: COLORS.navy, fontSize: 30, fontWeight: '700', width: 48, textAlign: 'center' },
   kanjiCopy: { flex: 1, marginLeft: 8 },
-  kanjiMeaning: { color: COLORS.ink, fontSize: 12, fontWeight: '800' },
-  kanjiReading: { color: COLORS.green, fontSize: 10, marginTop: 3 },
+  kanjiMeaning: { color: COLORS.navy, fontSize: 12, fontWeight: '800' },
+  kanjiReading: { color: COLORS.sage, fontSize: 10, marginTop: 3 },
   kanjiExample: { color: COLORS.muted, fontSize: 10, marginTop: 3 },
   metricsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 },
-  metricCard: { width: '48%', minHeight: 98, backgroundColor: '#FFFFFF', borderRadius: 15, padding: 12, borderWidth: 1, borderColor: COLORS.border },
+  metricCard: { width: '48%', minHeight: 98, backgroundColor: '#FFFFFF', borderRadius: 18, padding: 12, borderWidth: 1, borderColor: COLORS.border },
   metricEmoji: { fontSize: 19 },
-  metricValue: { color: COLORS.ink, fontSize: 17, fontWeight: '800', marginTop: 4 },
+  metricValue: { color: COLORS.navy, fontSize: 17, fontWeight: '800', marginTop: 4 },
   metricLabel: { color: COLORS.muted, fontSize: 9, lineHeight: 13, marginTop: 2 },
+  reviewHistoryCard: { backgroundColor: '#FFFFFF', paddingHorizontal: 13, borderRadius: 18, borderWidth: 1, borderColor: COLORS.border },
+  reviewHistoryLine: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: 1, borderBottomColor: '#F5EFEC' },
+  reviewHistoryCopy: { flex: 1 },
+  reviewHistoryWord: { color: COLORS.navy, fontSize: 11, fontWeight: '700' },
+  reviewHistoryDate: { color: COLORS.muted, fontSize: 9, marginTop: 3 },
+  reviewHistoryRating: { color: COLORS.sage, fontSize: 10, fontWeight: '800', textTransform: 'capitalize' },
 });
