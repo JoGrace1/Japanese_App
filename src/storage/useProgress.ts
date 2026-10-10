@@ -2,13 +2,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useState } from 'react';
 import { DECORATIONS } from '../content/beginner';
 import { localDateKey, scheduleReview } from '../review/scheduling';
-import { DailyActivity, ReviewEvent, ReviewRating, ReviewRecord, UserProgress } from '../types';
+import { DailyActivity, ReviewEvent, ReviewRating, ReviewRecord, UserProgress, VocabularyItem } from '../types';
 
 const STORAGE_KEY = 'sakura-garden-progress-v1';
 const INITIAL_PROGRESS: UserProgress = {
   version: 1,
   reviews: {},
   reviewHistory: [],
+  wordHuntWords: [],
   petals: 5,
   ownedDecorationIds: ['house', 'sakura'],
   gardenPurchases: [],
@@ -50,7 +51,7 @@ export function useProgress() {
         if (!mounted) return;
         if (stored) {
           const parsed: unknown = JSON.parse(stored);
-          if (isUserProgress(parsed)) setProgress(parsed);
+          if (isUserProgress(parsed)) setProgress({ ...parsed, wordHuntWords: parsed.wordHuntWords ?? [] });
           else throw new Error('Saved learning progress has an unsupported format.');
         }
         setCanPersist(true);
@@ -88,6 +89,16 @@ export function useProgress() {
           successfulReviews: rating === 'again' ? 0 : 1,
         }),
       };
+    });
+  }, []);
+
+  const addWordHuntWords = useCallback((words: VocabularyItem[]) => {
+    setProgress((current) => {
+      const existingIds = new Set(current.wordHuntWords.map((word) => word.id));
+      const newWords = words.filter((word) => !existingIds.has(word.id));
+      return newWords.length
+        ? { ...current, wordHuntWords: [...current.wordHuntWords, ...newWords] }
+        : current;
     });
   }, []);
 
@@ -134,7 +145,7 @@ export function useProgress() {
     });
   }, []);
 
-  return { progress, isLoaded, storageError, recordReview, awardActivity, completeStory, buyDecoration };
+  return { progress, isLoaded, storageError, recordReview, addWordHuntWords, awardActivity, completeStory, buyDecoration };
 }
 
 function isUserProgress(value: unknown): value is UserProgress {
@@ -146,6 +157,8 @@ function isUserProgress(value: unknown): value is UserProgress {
     && !Array.isArray(candidate.reviews)
     && Array.isArray(candidate.reviewHistory)
     && candidate.reviewHistory.every(isReviewEvent)
+    && (candidate.wordHuntWords === undefined
+      || (Array.isArray(candidate.wordHuntWords) && candidate.wordHuntWords.every(isVocabularyItem)))
     && Object.values(candidate.reviews).every(isReviewRecord)
     && typeof candidate.petals === 'number'
     && Number.isFinite(candidate.petals)
@@ -183,6 +196,16 @@ function isUserProgress(value: unknown): value is UserProgress {
       && Number.isInteger(activity.levelsCompleted)
       && activity.levelsCompleted >= 0,
     ));
+}
+
+function isVocabularyItem(value: unknown): value is VocabularyItem {
+  if (!value || typeof value !== 'object') return false;
+  const word = value as Partial<VocabularyItem>;
+  return typeof word.id === 'string'
+    && typeof word.japanese === 'string'
+    && typeof word.reading === 'string'
+    && typeof word.meaning === 'string'
+    && (word.partOfSpeech === undefined || typeof word.partOfSpeech === 'string');
 }
 
 function isReviewRecord(value: unknown): value is ReviewRecord {

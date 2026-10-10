@@ -61,17 +61,6 @@ export interface ReviewEvent {
   rating: ReviewRating;
 }
 
-export interface GameTile {
-  character: string;
-}
-
-export interface GameLevel {
-  level: number;
-  characters: string[];
-  scoreTarget: number;
-  moveLimit: number;
-}
-
 export interface GardenDecoration {
   id: string;
   name: string;
@@ -99,6 +88,7 @@ export interface UserProgress {
   version: 1;
   reviews: Record<string, ReviewRecord>;
   reviewHistory: ReviewEvent[];
+  wordHuntWords: VocabularyItem[];
   petals: number;
   ownedDecorationIds: string[];
   gardenPurchases: GardenPurchase[];

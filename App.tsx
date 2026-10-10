@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -19,18 +19,21 @@ import {
   VOCABULARY,
 } from './src/content/beginner';
 import {
-  Board,
-  createBoard,
-  createGameLevel,
-  playMove,
-  Position,
-} from './src/game/kanaCrush';
+  areWordHuntPositionsAdjacent,
+  createWordHuntBoard,
+  findWordHuntWord,
+  findWordsOnWordHuntBoard,
+  wordForScript,
+  WordHuntPosition,
+} from './src/game/wordHunt';
 import { isDue, localDateKey } from './src/review/scheduling';
 import { useProgress } from './src/storage/useProgress';
-import { ReviewRating, Story } from './src/types';
+import { KanaScript, ReviewRating, Story, StudyCard, VocabularyItem } from './src/types';
 
 export type Section = 'home' | 'game' | 'cards' | 'stories' | 'garden' | 'progress';
 type CardCategory = 'Due' | 'New' | 'Learned';
+type CardDeck = 'Main deck' | 'Word Hunt';
+const WORD_HUNT_ROUND_SECONDS = 60;
 
 const COLORS = {
   ink: '#44363D',
@@ -65,14 +68,15 @@ function currentStreak(dates: string[]): number {
 function chooseSessionCards(
   category: CardCategory,
   progress: ReturnType<typeof useProgress>['progress'],
+  cards: StudyCard[],
 ): string[] {
-  const cards = STUDY_CARDS.filter((card) => {
+  const filtered = cards.filter((card) => {
     const record = progress.reviews[card.id];
     if (category === 'Due') return isDue(record);
     if (category === 'New') return !record;
     return Boolean(record && record.successes >= 3);
   });
-  return cards.slice(0, 8).map((card) => card.id);
+  return filtered.slice(0, 8).map((card) => card.id);
 }
 
 export function LoadingScreen() {
@@ -159,7 +163,7 @@ export function HomeScreen({
 
       <SectionHeading title="Choose your adventure" helper="A little practice goes a long way" />
       <View style={styles.quickGrid}>
-        <QuickLink emoji="🎮" title="Kana Crush" detail="Match & learn" color={COLORS.pinkLight} onPress={() => onNavigate('game')} />
+        <QuickLink emoji="🔎" title="Kana Word Hunt" detail="Find & learn" color={COLORS.pinkLight} onPress={() => onNavigate('game')} />
         <QuickLink emoji="🗂️" title="Flashcards" detail={`${due} due today`} color={COLORS.lavender} onPress={() => onNavigate('cards')} />
         <QuickLink emoji="📖" title="Stories" detail="Read something lovely" color="#F8EFDA" onPress={() => onNavigate('stories')} />
         <QuickLink emoji="🌿" title="My Garden" detail={`${progress.petals} petals`} color={COLORS.greenLight} onPress={() => onNavigate('garden')} />
@@ -205,91 +209,143 @@ function SectionHeading({ title, helper }: { title: string; helper?: string }) {
 }
 
 export function GameScreen({
-  completedLevels,
+  wordHuntWords,
+  saveWords,
   awardActivity,
   onHome,
 }: {
-  completedLevels: number;
-  awardActivity: (petals: number, level?: number) => void;
+  wordHuntWords: VocabularyItem[];
+  saveWords: (words: VocabularyItem[]) => void;
+  awardActivity: (petals: number) => void;
   onHome: () => void;
 }) {
-  const [level, setLevel] = useState(completedLevels + 1);
-  const [board, setBoard] = useState<Board>(() => createBoard(Math.random, createGameLevel(completedLevels + 1).characters));
-  const [selected, setSelected] = useState<Position | null>(null);
-  const [score, setScore] = useState(0);
-  const [moves, setMoves] = useState(() => createGameLevel(completedLevels + 1).moveLimit);
-  const [validMoves, setValidMoves] = useState(0);
+  const [script, setScript] = useState<KanaScript>('hiragana');
+  const [board, setBoard] = useState<string[][]>(() => createWordHuntBoard('hiragana'));
+  const [selected, setSelected] = useState<WordHuntPosition[]>([]);
+  const [foundWords, setFoundWords] = useState<VocabularyItem[]>([]);
   const [finished, setFinished] = useState(false);
-  const [quizAnswer, setQuizAnswer] = useState<string | null>(null);
-  const [quizShown, setQuizShown] = useState(false);
-  const gameLevel = useMemo(() => createGameLevel(level), [level]);
-  const characters = gameLevel.characters;
-  const promptIndex = (level + 2) % characters.length;
-  const choices = [0, 1, 3].map((offset) => HIRAGANA.find(
-    (kana) => kana.character === characters[(promptIndex + offset) % characters.length],
-  )).filter((kana): kana is typeof HIRAGANA[number] => Boolean(kana));
-  const promptCharacter = choices[0] ?? HIRAGANA[0];
+  const [message, setMessage] = useState('');
+  const [savedCount, setSavedCount] = useState(0);
+  const [remainingSeconds, setRemainingSeconds] = useState(WORD_HUNT_ROUND_SECONDS);
+  const roundEnded = useRef(false);
+  const endRoundRef = useRef<() => void>(() => {});
   const tileTones = [styles.tileTone0, styles.tileTone1, styles.tileTone2, styles.tileTone3];
 
-  const resetLevel = (nextLevel = level) => {
-    setLevel(nextLevel);
-    setBoard(createBoard(Math.random, createGameLevel(nextLevel).characters));
-    setScore(0);
-    setMoves(createGameLevel(nextLevel).moveLimit);
-    setSelected(null);
+  const startRound = (nextScript = script) => {
+    roundEnded.current = false;
+    setScript(nextScript);
+    setBoard(createWordHuntBoard(nextScript));
+    setSelected([]);
+    setFoundWords([]);
     setFinished(false);
-    setValidMoves(0);
-    setQuizAnswer(null);
-    setQuizShown(false);
+    setMessage('');
+    setSavedCount(0);
+    setRemainingSeconds(WORD_HUNT_ROUND_SECONDS);
   };
 
-  const chooseTile = (position: Position) => {
+  const chooseTile = (position: WordHuntPosition) => {
     if (finished) return;
-    if (!selected) {
-      setSelected(position);
+    const previousIndex = selected.findIndex(
+      (item) => item.row === position.row && item.column === position.column,
+    );
+    if (previousIndex >= 0) {
+      setSelected(selected.slice(0, previousIndex));
       return;
     }
-    if (selected.row === position.row && selected.column === position.column) {
-      setSelected(null);
+    if (selected.length >= 5) {
+      setMessage('Words can be up to 5 kana long. Submit or clear this path first.');
       return;
     }
-    const result = playMove(board, selected, position, Math.random, characters);
-    setSelected(null);
-    if (!result.cleared) return;
-    const nextScore = score + result.score;
-    const nextMoveCount = validMoves + 1;
-    setBoard(result.board);
-    setScore(nextScore);
-    setMoves((value) => value - 1);
-    setValidMoves(nextMoveCount);
-    if (nextScore >= gameLevel.scoreTarget) {
-      setFinished(true);
-      awardActivity(5, level);
-    } else if (nextMoveCount % 3 === 0 && !quizShown) {
-      setQuizShown(true);
+    const lastPosition = selected[selected.length - 1];
+    if (lastPosition && !areWordHuntPositionsAdjacent(lastPosition, position)) {
+      setMessage('Choose a neighboring tile, including diagonals.');
+      return;
     }
+    setSelected([...selected, position]);
+    setMessage('');
   };
+
+  const submitWord = () => {
+    const spelling = selected.map(({ row, column }) => board[row][column]).join('');
+    const word = findWordHuntWord(spelling, script);
+    if (!word) {
+      setMessage('Not in this beginner word list. Try another path.');
+      setSelected([]);
+      return;
+    }
+    if (foundWords.some((found) => found.id === word.id)) {
+      setMessage(`${word.japanese} is already on your found list.`);
+      setSelected([]);
+      return;
+    }
+    setFoundWords([...foundWords, word]);
+    setSelected([]);
+    setMessage(`Found ${word.japanese} · ${word.meaning}`);
+  };
+
+  const finishRound = () => {
+    if (roundEnded.current) return;
+    roundEnded.current = true;
+    const existingReadings = new Set([
+      ...STUDY_CARDS.map((card) => card.reading),
+      ...wordHuntWords.map((word) => word.reading),
+    ]);
+    const newWords = foundWords.filter((word) => !existingReadings.has(word.reading));
+    saveWords(newWords);
+    if (foundWords.length > 0) awardActivity(5);
+    setSavedCount(newWords.length);
+    setFinished(true);
+  };
+  endRoundRef.current = finishRound;
+
+  useEffect(() => {
+    if (finished) return undefined;
+    const timer = setTimeout(() => {
+      if (remainingSeconds <= 1) {
+        setRemainingSeconds(0);
+        endRoundRef.current();
+      } else {
+        setRemainingSeconds((seconds) => Math.max(0, seconds - 1));
+      }
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [finished, remainingSeconds]);
+
+  const possibleWords = finished ? findWordsOnWordHuntBoard(board, script) : [];
+  const formattedTime = `${Math.floor(remainingSeconds / 60)}:${String(remainingSeconds % 60).padStart(2, '0')}`;
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <ScreenTitle eyebrow="A LITTLE PLAY" title="Kana Crush" subtitle="Match three or more of the same hiragana." />
+      <ScreenTitle eyebrow="A LITTLE PLAY" title="Kana Word Hunt" subtitle="Find beginner Japanese words hiding in the kana grid." />
       <View style={styles.gameIntro}>
-        <Text style={styles.gameIntroIcon}>🌸</Text>
-        <Text style={styles.gameIntroText}><Text style={styles.bold}>How to play:</Text> tap two neighboring tiles to swap. Make a line of 3+ matching sounds. Clear enough tiles to reach the level goal!</Text>
+        <Text style={styles.gameIntroIcon}>🔎</Text>
+        <Text style={styles.gameIntroText}><Text style={styles.bold}>How to play:</Text> tap kana in order to trace a word. Tiles can touch horizontally, vertically, or diagonally, but each tile can only be used once per word. Submit each word, then finish the round to save new finds.</Text>
+      </View>
+      <View style={styles.scriptRow}>
+        {(['hiragana', 'katakana'] as KanaScript[]).map((item) => (
+          <Pressable
+            key={item}
+            disabled={finished || foundWords.length > 0}
+            onPress={() => { if (script !== item) startRound(item); }}
+            style={[styles.scriptButton, script === item && styles.scriptButtonActive]}
+          >
+            <Text style={[styles.scriptButtonText, script === item && styles.scriptButtonTextActive]}>
+              {item === 'hiragana' ? 'あ Hiragana' : 'ア Katakana'}
+            </Text>
+          </Pressable>
+        ))}
       </View>
       <View style={styles.gameStatus}>
-        <View><Text style={styles.gameLabel}>LEVEL</Text><Text style={styles.gameValue}>{level}</Text></View>
-        <View><Text style={styles.gameLabel}>SCORE</Text>        <Text style={styles.gameValue}>{score}<Text style={styles.gameTarget}> / {gameLevel.scoreTarget}</Text></Text></View>
-        <View><Text style={styles.gameLabel}>MOVES</Text><Text style={styles.gameValue}>{moves}</Text></View>
+        <View><Text style={styles.gameLabel}>TIME</Text><Text style={[styles.gameValue, remainingSeconds <= 10 && !finished && styles.timerUrgent]}>{formattedTime}</Text></View>
+        <View><Text style={styles.gameLabel}>FOUND</Text><Text style={styles.gameValue}>{foundWords.length}</Text></View>
+        <View><Text style={styles.gameLabel}>SAVED WORDS</Text><Text style={styles.gameValue}>{wordHuntWords.length}</Text></View>
       </View>
-      <ProgressBar value={score} maximum={gameLevel.scoreTarget} />
       <View style={styles.board}>
         {board.map((row, rowIndex) => (
           <View key={`row-${rowIndex}`} style={styles.boardRow}>
-            {row.map((tile, columnIndex) => {
-              const character = tile.character;
-              const isSelected = selected?.row === rowIndex && selected.column === columnIndex;
-              const colorIndex = HIRAGANA.findIndex((item) => item.character === character) % 4;
+            {row.map((character, columnIndex) => {
+              const isSelected = selected.some((item) => item.row === rowIndex && item.column === columnIndex);
+              const colorIndex = (rowIndex + columnIndex) % tileTones.length;
               return (
                 <Pressable
                   accessibilityRole="button"
@@ -309,38 +365,50 @@ export function GameScreen({
           </View>
         ))}
       </View>
-      <Text style={styles.centerHint}>{selected ? 'Now choose a neighboring tile' : 'Tap a tile to begin a swap'}</Text>
-
-      {quizShown && !finished ? (
-        <View style={styles.quizCard}>
-          <Text style={styles.eyebrow}>SOUND CHECK</Text>
-          <Text style={styles.quizQuestion}>Which kana makes the sound “{promptCharacter.reading}”?</Text>
-          <View style={styles.quizOptions}>
-            {choices.map((choice) => (
-              <Pressable key={choice.character} onPress={() => setQuizAnswer(choice.character)} style={[styles.quizOption, quizAnswer === choice.character && styles.quizOptionSelected]}>
-                <Text style={styles.quizOptionText}>{choice.character}</Text>
-              </Pressable>
-            ))}
-          </View>
-          {quizAnswer ? <Text style={styles.quizFeedback}>{quizAnswer === promptCharacter.character ? 'That’s right! よくできました' : `Not quite — ${promptCharacter.character} is “${promptCharacter.reading}”.`}</Text> : null}
+      <Text style={styles.centerHint}>
+        {selected.length ? `Your word: ${selected.map(({ row, column }) => board[row][column]).join('')}` : 'Tap a tile to start tracing a word'}
+      </Text>
+      <View style={styles.wordActionRow}>
+        <SecondaryButton title="Clear path" onPress={() => { setSelected([]); setMessage(''); }} disabled={finished} />
+        <PrimaryButton title="Submit word" onPress={submitWord} disabled={selected.length < 2 || finished} />
+      </View>
+      {message ? <Text style={styles.wordMessage}>{message}</Text> : null}
+      {foundWords.length ? (
+        <View style={styles.foundWordsCard}>
+          <Text style={styles.noteTitle}>Words found this round</Text>
+          {foundWords.map((word) => (
+            <View key={word.id} style={styles.foundWordLine}>
+              <Text style={styles.foundWordJapanese}>{word.japanese}</Text>
+              <Text style={styles.foundWordMeaning}>{word.meaning}</Text>
+            </View>
+          ))}
         </View>
       ) : null}
-
       {finished ? (
-        <View style={styles.successCard}>
-          <Text style={styles.successEmoji}>🎉</Text>
-          <Text style={styles.successTitle}>Level complete!</Text>
-          <Text style={styles.bodyText}>Lovely matching. You earned 5 petals for your garden.</Text>
-          <PrimaryButton title="Play next level" onPress={() => resetLevel(level + 1)} />
-          <SecondaryButton title="Back to garden" onPress={onHome} />
-        </View>
-      ) : moves === 0 ? (
-        <View style={styles.successCard}>
-          <Text style={styles.successTitle}>One more try?</Text>
-          <Text style={styles.bodyText}>Reach {gameLevel.scoreTarget} points to complete this level.</Text>
-          <PrimaryButton title="Restart level" onPress={() => resetLevel()} />
-        </View>
-      ) : null}
+        <>
+          <View style={styles.successCard}>
+            <Text style={styles.successEmoji}>🎉</Text>
+            <Text style={styles.successTitle}>Round complete</Text>
+            <Text style={styles.bodyText}>
+              {foundWords.length
+                ? `${foundWords.length} word${foundWords.length === 1 ? '' : 's'} found. ${savedCount} new ${savedCount === 1 ? 'word was' : 'words were'} added to your Word Hunt flash cards.${savedCount < foundWords.length ? ' Words already in your main deck or this collection were not duplicated.' : ''} You earned 5 petals.`
+                : 'No words found this time. Try another board.'}
+            </Text>
+            <PrimaryButton title="Play another round" onPress={() => startRound()} />
+            <SecondaryButton title="Back to garden" onPress={onHome} />
+          </View>
+          <View style={styles.foundWordsCard}>
+            <Text style={styles.noteTitle}>Words you could have found · {possibleWords.length}</Text>
+            {possibleWords.length ? possibleWords.map((word) => (
+              <View key={word.id} style={styles.foundWordLine}>
+                <Text style={styles.foundWordJapanese}>{wordForScript(word.japanese, script)}</Text>
+                <Text style={styles.foundWordMeaning}>{word.meaning}</Text>
+              </View>
+            )) : <Text style={styles.sectionHelper}>No other dictionary words were traceable on this board.</Text>}
+            {possibleWords.length === 10 ? <Text style={styles.sectionHelper}>Showing up to 10 matches.</Text> : null}
+          </View>
+        </>
+      ) : <PrimaryButton title="Finish round early · save words" onPress={finishRound} />}
     </ScrollView>
   );
 }
@@ -354,6 +422,7 @@ export function FlashcardsScreen({
   recordReview: (cardId: string, rating: ReviewRating) => void;
   awardActivity: (petals: number) => void;
 }) {
+  const [deck, setDeck] = useState<CardDeck>('Main deck');
   const [category, setCategory] = useState<CardCategory>('Due');
   const [queue, setQueue] = useState<string[]>([]);
   const [sessionActive, setSessionActive] = useState(false);
@@ -362,14 +431,23 @@ export function FlashcardsScreen({
   const [sessionTotal, setSessionTotal] = useState(0);
   const [answered, setAnswered] = useState(0);
   const [successful, setSuccessful] = useState(0);
-  const cardById = useMemo(() => new Map(STUDY_CARDS.map((card) => [card.id, card])), []);
-  const due = STUDY_CARDS.filter((card) => isDue(progress.reviews[card.id])).length;
-  const fresh = STUDY_CARDS.filter((card) => !progress.reviews[card.id]).length;
-  const learned = STUDY_CARDS.filter((card) => (progress.reviews[card.id]?.successes ?? 0) >= 3).length;
+  const deckCards: StudyCard[] = deck === 'Main deck'
+    ? STUDY_CARDS
+    : progress.wordHuntWords.map((word) => ({
+      id: word.id,
+      type: 'vocabulary',
+      front: word.japanese,
+      reading: word.reading,
+      meaning: word.meaning,
+    }));
+  const cardById = useMemo(() => new Map(deckCards.map((card) => [card.id, card])), [deckCards]);
+  const due = deckCards.filter((card) => isDue(progress.reviews[card.id])).length;
+  const fresh = deckCards.filter((card) => !progress.reviews[card.id]).length;
+  const learned = deckCards.filter((card) => (progress.reviews[card.id]?.successes ?? 0) >= 3).length;
   const currentCard = queue.length ? cardById.get(queue[0]) : undefined;
 
   const startSession = () => {
-    const nextQueue = chooseSessionCards(category, progress);
+    const nextQueue = chooseSessionCards(category, progress, deckCards);
     setQueue(nextQueue);
     setSessionTotal(nextQueue.length);
     setAnswered(0);
@@ -406,6 +484,24 @@ export function FlashcardsScreen({
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <ScreenTitle eyebrow="GENTLE REVIEW" title="Flashcards" subtitle="Small steps today make memories that stay." />
+      <View style={styles.deckSelector}>
+        {(['Main deck', 'Word Hunt'] as CardDeck[]).map((item) => (
+          <Pressable
+            key={item}
+            onPress={() => {
+              setDeck(item);
+              setSessionActive(false);
+              setQueue([]);
+              setCategory(item === 'Word Hunt' ? 'New' : 'Due');
+            }}
+            style={[styles.deckOption, deck === item && styles.deckOptionActive]}
+          >
+            <Text style={[styles.deckOptionText, deck === item && styles.deckOptionTextActive]}>
+              {item === 'Word Hunt' ? `Word Hunt · ${progress.wordHuntWords.length}` : item}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
       <View style={styles.categoryRow}>
         {(['Due', 'New', 'Learned'] as CardCategory[]).map((item) => {
           const count = item === 'Due' ? due : item === 'New' ? fresh : learned;
@@ -425,7 +521,9 @@ export function FlashcardsScreen({
           </View>
           <ProgressBar value={answered} maximum={Math.max(sessionTotal, 1)} />
           <View style={styles.flashcard}>
-            <Text style={styles.cardType}>{currentCard.type === 'kana' ? currentCard.kanaScript?.toUpperCase() : 'EVERYDAY JAPANESE'}</Text>
+            <Text style={styles.cardType}>
+              {deck === 'Word Hunt' ? 'WORD HUNT' : currentCard.type === 'kana' ? currentCard.kanaScript?.toUpperCase() : 'EVERYDAY JAPANESE'}
+            </Text>
             <Text style={styles.flashFront}>{currentCard.front}</Text>
             {revealed ? (
               <>
@@ -470,13 +568,14 @@ export function FlashcardsScreen({
           <Text style={styles.sessionEmoji}>{category === 'Due' ? '🍡' : category === 'New' ? '🌱' : '✨'}</Text>
           <Text style={styles.sessionHeading}>{category} cards</Text>
           <Text style={styles.bodyText}>
-            {category === 'Due' ? `${due} card${due === 1 ? '' : 's'} are ready for a little review.`
+            {deck === 'Word Hunt' && deckCards.length === 0 ? 'Words you discover in Kana Word Hunt will be collected here.'
+              : category === 'Due' ? `${due} card${due === 1 ? '' : 's'} are ready for a little review.`
               : category === 'New' ? `${fresh} new cards are waiting to meet you.`
                 : `${learned} cards have reached three successful reviews.`}
           </Text>
           <Text style={styles.schedulingNote}>Again repeats in-session · Hard: ~12 hours · Good: 1 day, then grows · Easy: 4 days, then grows</Text>
           {category !== 'Learned' ? <PrimaryButton title="Begin a short session" onPress={startSession} disabled={(category === 'Due' ? due : fresh) === 0} /> : null}
-          {category !== 'Learned' && (category === 'Due' ? due : fresh) === 0 ? <Text style={styles.sectionHelper}>Nothing here right now. Choose another stack.</Text> : null}
+          {category !== 'Learned' && (category === 'Due' ? due : fresh) === 0 && deckCards.length > 0 ? <Text style={styles.sectionHelper}>Nothing here right now. Choose another stack.</Text> : null}
         </View>
       )}
       <View style={styles.noteCard}>
@@ -680,7 +779,7 @@ export function ProgressScreen({ progress }: { progress: ReturnType<typeof usePr
         <MetricCard emoji="📚" value={`${learnedVocabulary}/${VOCABULARY.length}`} label="vocabulary mastered" />
         <MetricCard emoji="🗂️" value={`${due}`} label="flashcards due today" />
         <MetricCard emoji="📖" value={`${progress.storiesCompleted.length}/${STORIES.length}`} label="stories completed" />
-        <MetricCard emoji="🎮" value={`${progress.completedLevels}`} label="game levels completed" />
+        <MetricCard emoji="🔎" value={`${progress.wordHuntWords.length}`} label="Word Hunt words collected" />
         <MetricCard emoji="🔥" value={`${currentStreak(progress.dailyActivity.map((activity) => activity.date))} days`} label="current streak" />
         <MetricCard emoji="✨" value={`${Math.min(reviewedToday, progress.dailyGoal)}/${progress.dailyGoal}`} label="today's card goal" />
       </View>
@@ -787,27 +886,31 @@ const styles = StyleSheet.create({
   gameIntroIcon: { fontSize: 24 },
   gameIntroText: { flex: 1, color: COLORS.ink, fontSize: 11, lineHeight: 17 },
   bold: { fontWeight: '800' },
+  scriptRow: { flexDirection: 'row', gap: 9, marginTop: 3, marginBottom: 12 },
+  scriptButton: { flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: 13, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: COLORS.border },
+  scriptButtonActive: { backgroundColor: COLORS.greenLight, borderColor: COLORS.green },
+  scriptButtonText: { color: COLORS.muted, fontSize: 12, fontWeight: '700' },
+  scriptButtonTextActive: { color: COLORS.green },
   gameStatus: { backgroundColor: COLORS.paper, borderRadius: 17, padding: 14, flexDirection: 'row', justifyContent: 'space-around', marginBottom: 13, borderWidth: 1, borderColor: COLORS.border },
   gameLabel: { color: COLORS.muted, fontSize: 9, fontWeight: '800', letterSpacing: 1, textAlign: 'center' },
   gameValue: { color: COLORS.ink, fontSize: 18, fontWeight: '800', textAlign: 'center', marginTop: 4 },
-  gameTarget: { color: COLORS.muted, fontSize: 11, fontWeight: '600' },
+  timerUrgent: { color: '#C64D5E' },
   board: { alignSelf: 'center', marginTop: 18, padding: 8, backgroundColor: '#F3E4E7', borderRadius: 18, gap: 5 },
   boardRow: { flexDirection: 'row', gap: 5 },
-  tile: { width: 43, height: 43, borderRadius: 12, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#FFFFFFA0' },
+  tile: { width: 46, height: 46, borderRadius: 12, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#FFFFFFA0' },
   tileTone0: { backgroundColor: '#F8DDE2' },
   tileTone1: { backgroundColor: '#DFEEDC' },
   tileTone2: { backgroundColor: '#F7EBCF' },
   tileTone3: { backgroundColor: '#E9E1F2' },
   tileSelected: { borderColor: COLORS.pink, transform: [{ scale: 1.08 }] },
-  tileText: { color: COLORS.ink, fontSize: 22, fontWeight: '700' },
+  tileText: { color: COLORS.ink, fontSize: 24, fontWeight: '700' },
   centerHint: { color: COLORS.muted, textAlign: 'center', fontSize: 11, marginTop: 10, marginBottom: 9 },
-  quizCard: { backgroundColor: COLORS.paper, borderRadius: 18, padding: 16, marginTop: 14, borderWidth: 1, borderColor: COLORS.border },
-  quizQuestion: { color: COLORS.ink, fontSize: 14, fontWeight: '700', marginBottom: 12 },
-  quizOptions: { flexDirection: 'row', gap: 10 },
-  quizOption: { flex: 1, alignItems: 'center', padding: 12, backgroundColor: COLORS.cream, borderRadius: 12 },
-  quizOptionSelected: { borderWidth: 2, borderColor: COLORS.pink },
-  quizOptionText: { color: COLORS.ink, fontSize: 23, fontWeight: '700' },
-  quizFeedback: { color: COLORS.green, fontSize: 12, fontWeight: '700', marginTop: 10 },
+  wordActionRow: { flexDirection: 'row', gap: 9, alignItems: 'center' },
+  wordMessage: { color: COLORS.green, fontSize: 11, fontWeight: '700', textAlign: 'center', marginTop: 8 },
+  foundWordsCard: { backgroundColor: COLORS.paper, borderRadius: 16, padding: 14, marginTop: 14, borderWidth: 1, borderColor: COLORS.border },
+  foundWordLine: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: '#F5EFEC' },
+  foundWordJapanese: { color: COLORS.ink, fontSize: 14, fontWeight: '800', minWidth: 80 },
+  foundWordMeaning: { color: COLORS.muted, flex: 1, fontSize: 11 },
   successCard: { alignItems: 'center', backgroundColor: COLORS.greenLight, borderRadius: 20, padding: 20, marginTop: 16 },
   successEmoji: { fontSize: 38, marginBottom: 6 },
   successTitle: { color: COLORS.ink, fontSize: 21, fontWeight: '800' },
@@ -817,6 +920,11 @@ const styles = StyleSheet.create({
   secondaryButton: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: COLORS.border, borderRadius: 13, paddingHorizontal: 13, paddingVertical: 10, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
   secondaryButtonText: { color: COLORS.ink, fontSize: 11, fontWeight: '700', textAlign: 'center' },
   buttonDisabled: { opacity: 0.48 },
+  deckSelector: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  deckOption: { flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: 13, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: COLORS.border },
+  deckOptionActive: { backgroundColor: COLORS.lavender, borderColor: '#C9BADB' },
+  deckOptionText: { color: COLORS.muted, fontSize: 11, fontWeight: '700' },
+  deckOptionTextActive: { color: COLORS.ink },
   categoryRow: { flexDirection: 'row', gap: 8, marginBottom: 17 },
   categoryChip: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6, paddingVertical: 10, backgroundColor: '#FFFFFF', borderRadius: 13, borderWidth: 1, borderColor: COLORS.border },
   categoryChipActive: { backgroundColor: COLORS.pink, borderColor: COLORS.pink },
