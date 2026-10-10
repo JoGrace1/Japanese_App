@@ -6,6 +6,7 @@ import {
   StudyCard,
   VocabularyItem,
 } from '../types';
+import { A1_VOCABULARY } from './a1Vocabulary';
 
 export const HIRAGANA: KanaCharacter[] = [
   ['a', 'あ'], ['i', 'い'], ['u', 'う'], ['e', 'え'], ['o', 'お'],
@@ -77,36 +78,36 @@ function kanaToRomaji(reading: string): string {
   return result;
 }
 
-export const VOCABULARY: VocabularyItem[] = [
-  { id: 'v-hello', japanese: 'こんにちは', reading: 'こんにちは', meaning: 'hello; good afternoon', partOfSpeech: 'greeting', exampleJapanese: 'こんにちは、ゆきさん。', exampleReading: 'こんにちは、ゆきさん。', exampleMeaning: 'Hello, Yuki.' },
-  { id: 'v-thanks', japanese: 'ありがとう', reading: 'ありがとう', meaning: 'thank you', partOfSpeech: 'expression' },
-  { id: 'v-goodbye', japanese: 'さようなら', reading: 'さようなら', meaning: 'goodbye', partOfSpeech: 'expression' },
-  { id: 'v-water', japanese: 'みず', reading: 'みず', kanji: '水', meaning: 'water', partOfSpeech: 'noun', exampleJapanese: 'みずを のみます。', exampleReading: 'みずを のみます。', exampleMeaning: 'I drink water.' },
-  { id: 'v-tea', japanese: 'おちゃ', reading: 'おちゃ', meaning: 'tea', partOfSpeech: 'noun' },
-  { id: 'v-rice', japanese: 'ごはん', reading: 'ごはん', meaning: 'rice; meal', partOfSpeech: 'noun' },
-  { id: 'v-cat', japanese: 'ねこ', reading: 'ねこ', meaning: 'cat', partOfSpeech: 'noun' },
-  { id: 'v-dog', japanese: 'いぬ', reading: 'いぬ', meaning: 'dog', partOfSpeech: 'noun' },
-  { id: 'v-person', japanese: 'ひと', reading: 'ひと', kanji: '人', meaning: 'person', partOfSpeech: 'noun' },
-  { id: 'v-house', japanese: 'いえ', reading: 'いえ', meaning: 'house; home', partOfSpeech: 'noun' },
-  { id: 'v-book', japanese: 'ほん', reading: 'ほん', meaning: 'book', partOfSpeech: 'noun' },
-  { id: 'v-flower', japanese: 'はな', reading: 'はな', meaning: 'flower', partOfSpeech: 'noun' },
-  { id: 'v-eat', japanese: 'たべます', reading: 'たべます', meaning: 'to eat', partOfSpeech: 'verb' },
-  { id: 'v-drink', japanese: 'のみます', reading: 'のみます', meaning: 'to drink', partOfSpeech: 'verb' },
-  { id: 'v-go', japanese: 'いきます', reading: 'いきます', meaning: 'to go', partOfSpeech: 'verb' },
-  { id: 'v-big', japanese: 'おおきい', reading: 'おおきい', meaning: 'big', partOfSpeech: 'adjective' },
-  { id: 'v-small', japanese: 'ちいさい', reading: 'ちいさい', meaning: 'small', partOfSpeech: 'adjective' },
-  { id: 'v-one', japanese: 'いち', reading: 'いち', meaning: 'one', partOfSpeech: 'number' },
-  { id: 'v-two', japanese: 'に', reading: 'に', meaning: 'two', partOfSpeech: 'number' },
-  { id: 'v-three', japanese: 'さん', reading: 'さん', meaning: 'three', partOfSpeech: 'number' },
-].map((word: VocabularyItem) => ({
-  ...word,
-  romaji: word.romaji ?? kanaToRomaji(word.reading),
-  wordType: word.wordType ?? word.partOfSpeech,
-  tags: word.tags ?? ['A1', word.partOfSpeech ?? 'vocabulary'],
-  exampleSentence: word.exampleSentence ?? word.exampleJapanese,
-  exampleTranslation: word.exampleTranslation ?? word.exampleMeaning,
-}));
-
+// export const VOCABULARY: VocabularyItem[] = [
+//   { id: 'v-hello', japanese: 'こんにちは', reading: 'こんにちは', meaning: 'hello; good afternoon', partOfSpeech: 'greeting', exampleJapanese: 'こんにちは、ゆきさん。', exampleReading: 'こんにちは、ゆきさん。', exampleMeaning: 'Hello, Yuki.' },
+//   { id: 'v-thanks', japanese: 'ありがとう', reading: 'ありがとう', meaning: 'thank you', partOfSpeech: 'expression' },
+//   { id: 'v-goodbye', japanese: 'さようなら', reading: 'さようなら', meaning: 'goodbye', partOfSpeech: 'expression' },
+//   { id: 'v-water', japanese: 'みず', reading: 'みず', kanji: '水', meaning: 'water', partOfSpeech: 'noun', exampleJapanese: 'みずを のみます。', exampleReading: 'みずを のみます。', exampleMeaning: 'I drink water.' },
+//   { id: 'v-tea', japanese: 'おちゃ', reading: 'おちゃ', meaning: 'tea', partOfSpeech: 'noun' },
+//   { id: 'v-rice', japanese: 'ごはん', reading: 'ごはん', meaning: 'rice; meal', partOfSpeech: 'noun' },
+//   { id: 'v-cat', japanese: 'ねこ', reading: 'ねこ', meaning: 'cat', partOfSpeech: 'noun' },
+//   { id: 'v-dog', japanese: 'いぬ', reading: 'いぬ', meaning: 'dog', partOfSpeech: 'noun' },
+//   { id: 'v-person', japanese: 'ひと', reading: 'ひと', kanji: '人', meaning: 'person', partOfSpeech: 'noun' },
+//   { id: 'v-house', japanese: 'いえ', reading: 'いえ', meaning: 'house; home', partOfSpeech: 'noun' },
+//   { id: 'v-book', japanese: 'ほん', reading: 'ほん', meaning: 'book', partOfSpeech: 'noun' },
+//   { id: 'v-flower', japanese: 'はな', reading: 'はな', meaning: 'flower', partOfSpeech: 'noun' },
+//   { id: 'v-eat', japanese: 'たべます', reading: 'たべます', meaning: 'to eat', partOfSpeech: 'verb' },
+//   { id: 'v-drink', japanese: 'のみます', reading: 'のみます', meaning: 'to drink', partOfSpeech: 'verb' },
+//   { id: 'v-go', japanese: 'いきます', reading: 'いきます', meaning: 'to go', partOfSpeech: 'verb' },
+//   { id: 'v-big', japanese: 'おおきい', reading: 'おおきい', meaning: 'big', partOfSpeech: 'adjective' },
+//   { id: 'v-small', japanese: 'ちいさい', reading: 'ちいさい', meaning: 'small', partOfSpeech: 'adjective' },
+//   { id: 'v-one', japanese: 'いち', reading: 'いち', meaning: 'one', partOfSpeech: 'number' },
+//   { id: 'v-two', japanese: 'に', reading: 'に', meaning: 'two', partOfSpeech: 'number' },
+//   { id: 'v-three', japanese: 'さん', reading: 'さん', meaning: 'three', partOfSpeech: 'number' },
+// ].map((word: VocabularyItem) => ({
+//   ...word,
+//   romaji: word.romaji ?? kanaToRomaji(word.reading),
+//   wordType: word.wordType ?? word.partOfSpeech,
+//   tags: word.tags ?? ['A1', word.partOfSpeech ?? 'vocabulary'],
+//   exampleSentence: word.exampleSentence ?? word.exampleJapanese,
+//   exampleTranslation: word.exampleTranslation ?? word.exampleMeaning,
+// }));
+export const VOCABULARY: VocabularyItem[] = A1_VOCABULARY;
 export const STORIES: Story[] = [
   {
     id: 'morning-garden',
