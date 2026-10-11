@@ -43,7 +43,7 @@ import { KanaScript, ReviewRating, Story, StudyCard, VocabularyItem } from './sr
 
 export type Section = 'home' | 'game' | 'cards' | 'stories' | 'garden' | 'progress' | 'more';
 type CardCategory = 'Due' | 'New' | 'Relearn' | 'Difficult' | 'All';
-type CardDeck = 'Main deck' | 'Word Hunt';
+type CardDeck = 'Main deck' | 'Word Hunt' | 'Kana';
 type CardDirection = 'meaning' | 'japanese' | 'reading';
 const WORD_HUNT_ROUND_SECONDS = 60;
 
@@ -447,16 +447,21 @@ export function FlashcardsScreen({
   const mainDeckCards = includeDiscoveredWords(STUDY_CARDS, progress.wordHuntWords);
   const deckCards: StudyCard[] = deck === 'Main deck'
     ? mainDeckCards
-    : progress.wordHuntWords.map((word) => ({
+    : deck === 'Kana'
+      ? STUDY_CARDS
+        .filter((card) => card.type === 'kana')
+        .map((card) => ({ ...card, meaning: card.reading }))
+      : progress.wordHuntWords.map((word) => ({
       id: word.id,
       type: 'vocabulary',
-      front: word.japanese,
+      front: word.reading,
       reading: word.reading,
       meaning: word.meaning,
-      kanji: word.kanji,
     }));
   const cardById = useMemo(() => new Map(deckCards.map((card) => [card.id, card])), [deckCards]);
-  const questionCards = direction === 'meaning' ? deckCards : deckCards.filter((card) => card.type === 'vocabulary');
+  const questionCards = deck === 'Kana' || direction === 'meaning'
+    ? deckCards
+    : deckCards.filter((card) => card.type === 'vocabulary');
   const due = questionCards.filter((card) => isDue(progress.reviews[card.id])).length;
   const fresh = questionCards.filter((card) => !progress.reviews[card.id]).length;
   const difficultCardIds = new Set(progress.reviewHistory
@@ -474,12 +479,12 @@ export function FlashcardsScreen({
     ? currentCard.front
     : activeDirection === 'japanese'
       ? currentCard.meaning
-      : currentCard.kanji ?? currentCard.front;
+      : currentCard.front;
   const expectedAnswer: string | string[] = !currentCard ? '' : activeDirection === 'meaning'
     ? currentCard.meaning.split(';').map((part) => part.trim())
     : activeDirection === 'reading'
       ? currentCard.reading
-      : [currentCard.front, ...(currentCard.kanji ? [currentCard.kanji] : [])];
+      : currentCard.front;
   const expectsJapanese = activeDirection !== 'meaning';
 
   const startSession = () => {
@@ -542,23 +547,47 @@ export function FlashcardsScreen({
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <ScreenTitle eyebrow="GENTLE REVIEW" title="Flashcards" subtitle="Small steps today make memories that stay." />
       <View style={styles.deckSelector}>
-        {(['Main deck', 'Word Hunt'] as CardDeck[]).map((item) => (
+        {(['Main deck', 'Word Hunt', 'Kana'] as CardDeck[]).map((item) => (
           <Pressable
             key={item}
             onPress={() => {
               setDeck(item);
               setSessionActive(false);
               setQueue([]);
-              setCategory(item === 'Word Hunt' ? 'New' : 'Due');
+              setCategory(item === 'Main deck' ? 'Due' : 'New');
             }}
             style={[styles.deckOption, deck === item && styles.deckOptionActive]}
           >
             <Text style={[styles.deckOptionText, deck === item && styles.deckOptionTextActive]}>
-              {item === 'Word Hunt' ? `Word Hunt · ${progress.wordHuntWords.length}` : `Main deck · ${mainDeckCards.length}`}
+              {item === 'Word Hunt' ? `Word Hunt · ${progress.wordHuntWords.length}`
+                : item === 'Kana' ? `Kana · ${HIRAGANA.length + KATAKANA.length}`
+                  : `Main deck · ${mainDeckCards.length}`}
             </Text>
           </Pressable>
         ))}
       </View>
+      {deck === 'Kana' && !sessionActive ? (
+        <View style={styles.kanaOverview}>
+          <Text style={styles.noteTitle}>Kana overview</Text>
+          <Text style={styles.sectionHelper}>All hiragana and katakana with their sounds.</Text>
+          {([
+            ['Hiragana', HIRAGANA],
+            ['Katakana', KATAKANA],
+          ] as const).map(([title, characters]) => (
+            <View key={title}>
+              <Text style={styles.kanaOverviewTitle}>{title}</Text>
+              <View style={styles.kanaOverviewGrid}>
+                {characters.map((kana) => (
+                  <View key={kana.id} style={styles.kanaOverviewItem}>
+                    <Text style={styles.kanaOverviewCharacter}>{kana.character}</Text>
+                    <Text style={styles.kanaOverviewReading}>{kana.reading}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          ))}
+        </View>
+      ) : null}
       <View style={styles.categoryRow}>
         {(['Due', 'New', 'Relearn', 'Difficult', 'All'] as CardCategory[]).map((item) => {
           const count = item === 'Due' ? due : item === 'New' ? fresh
@@ -572,7 +601,7 @@ export function FlashcardsScreen({
         })}
       </View>
       {!sessionActive ? (
-        <View style={styles.directionCard}>
+        deck !== 'Kana' ? <View style={styles.directionCard}>
           <Text style={styles.noteTitle}>Question type</Text>
           <View style={styles.directionRow}>
             {([
@@ -592,7 +621,7 @@ export function FlashcardsScreen({
             ))}
           </View>
           <Text style={styles.sectionHelper}>One direction per session keeps related prompts from repeating together.</Text>
-        </View>
+        </View> : null
       ) : null}
       {sessionActive && currentCard ? (
         <View>
@@ -619,9 +648,10 @@ export function FlashcardsScreen({
             </Text>
             <Text style={[styles.flashFront, activeDirection === 'japanese' && styles.englishPrompt]}>{question}</Text>
             <Text style={styles.sectionHelper}>
-              {activeDirection === 'meaning' ? 'What does this mean?'
-                : activeDirection === 'japanese' ? 'Type the Japanese word'
-                  : 'Type its reading in hiragana'}
+              {currentCard.type === 'kana' ? 'Type the sound in romaji'
+                : activeDirection === 'meaning' ? 'What does this mean?'
+                  : activeDirection === 'japanese' ? 'Type the Japanese word in kana'
+                    : 'Type its reading in kana'}
             </Text>
             {!revealed ? (
               <>
@@ -631,7 +661,7 @@ export function FlashcardsScreen({
                   autoCorrect={false}
                   onChangeText={setAnswer}
                   onSubmitEditing={submitAnswer}
-                  placeholder={expectsJapanese ? 'Enter your answer' : 'Type the meaning'}
+                  placeholder={currentCard.type === 'kana' ? 'Type the sound in romaji' : expectsJapanese ? 'Enter your answer' : 'Type the meaning'}
                   returnKeyType="done"
                   style={styles.answerInput}
                   value={answer}
@@ -657,7 +687,6 @@ export function FlashcardsScreen({
                   </Text>
                 ) : null}
                 <Text style={styles.flashReading}>{currentCard.reading}</Text>
-                {currentCard.kanji ? <Text style={styles.flashReading}>{currentCard.kanji}</Text> : null}
                 <Text style={styles.flashMeaning}>{currentCard.meaning}</Text>
                 {currentCard.exampleJapanese ? <Text style={styles.exampleText}>{currentCard.exampleJapanese}{currentCard.exampleMeaning ? `\n${currentCard.exampleMeaning}` : ''}</Text> : null}
               </>
@@ -1084,6 +1113,12 @@ const styles = StyleSheet.create({
   deckOptionActive: { backgroundColor: '#F0E9FF', borderColor: '#CFBDF8' },
   deckOptionText: { color: COLORS.muted, fontSize: 11, fontWeight: '700' },
   deckOptionTextActive: { color: COLORS.navy },
+  kanaOverview: { backgroundColor: '#FFFFFF', borderRadius: 18, padding: 14, marginBottom: 15, borderWidth: 1, borderColor: COLORS.border },
+  kanaOverviewTitle: { color: COLORS.navy, fontSize: 12, fontWeight: '800', marginTop: 13, marginBottom: 7 },
+  kanaOverviewGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  kanaOverviewItem: { width: '18%', minHeight: 53, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F8F2F9', borderRadius: 10 },
+  kanaOverviewCharacter: { color: COLORS.navy, fontSize: 20, fontWeight: '700' },
+  kanaOverviewReading: { color: COLORS.muted, fontSize: 9, fontWeight: '700' },
   categoryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 17 },
   categoryChip: { flexGrow: 1, flexBasis: '28%', minWidth: 80, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6, paddingVertical: 10, backgroundColor: '#FFFFFF', borderRadius: 14, borderWidth: 1, borderColor: COLORS.border },
   categoryChipActive: { backgroundColor: COLORS.pink, borderColor: COLORS.pink },

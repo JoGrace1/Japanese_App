@@ -14,11 +14,11 @@ export function includeDiscoveredWords(
     .map((word): StudyCard => ({
       id: word.id,
       type: 'vocabulary',
-      front: word.japanese,
+      front: word.reading,
       reading: word.reading,
       meaning: word.meaning,
       kanji: word.kanji,
-      exampleJapanese: word.exampleJapanese,
+      exampleJapanese: word.exampleReading,
       exampleMeaning: word.exampleMeaning,
       audioRef: word.audioRef,
     }));
