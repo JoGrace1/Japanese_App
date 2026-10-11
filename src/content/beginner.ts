@@ -7,6 +7,7 @@ import {
   VocabularyItem,
 } from '../types';
 import { A1_VOCABULARY } from './a1Vocabulary';
+import { createVocabularyKanji } from './kanjiVocabulary';
 
 export const HIRAGANA: KanaCharacter[] = [
   ['a', 'あ'], ['i', 'い'], ['u', 'う'], ['e', 'え'], ['o', 'お'],
@@ -164,10 +165,39 @@ export const STORIES: Story[] = [
   },
 ];
 
-export const INTRODUCTORY_KANJI: KanjiItem[] = [
+const CURATED_KANJI: KanjiItem[] = [
   { id: 'kanji-one', character: '一', readings: { on: ['いち'], kun: ['ひと'] }, meanings: ['one'], exampleWords: [{ japanese: '一つ', reading: 'ひとつ', meaning: 'one thing' }] },
   { id: 'kanji-person', character: '人', readings: { on: ['じん', 'にん'], kun: ['ひと'] }, meanings: ['person'], exampleWords: [{ japanese: '人', reading: 'ひと', meaning: 'person' }] },
+  {
+    id: 'kanji-book',
+    character: '本',
+    readings: { on: ['ほん'], kun: ['もと'] },
+    meanings: ['book', 'origin'],
+    exampleWords: [
+      { japanese: '本', reading: 'ほん', meaning: 'book' },
+      { japanese: '日本', reading: 'にほん', meaning: 'Japan' },
+    ],
+  },
+  {
+    id: 'kanji-day',
+    character: '日',
+    readings: { on: ['にち', 'じつ'], kun: ['ひ', 'か'] },
+    meanings: ['day', 'sun'],
+    exampleWords: [
+      { japanese: '日', reading: 'ひ', meaning: 'day; sun' },
+      { japanese: '日本', reading: 'にほん', meaning: 'Japan' },
+    ],
+  },
+  {
+    id: 'kanji-country',
+    character: '国',
+    readings: { on: ['こく'], kun: ['くに'] },
+    meanings: ['country'],
+    exampleWords: [{ japanese: '外国', reading: 'がいこく', meaning: 'foreign country' }],
+  },
 ];
+
+export const INTRODUCTORY_KANJI: KanjiItem[] = createVocabularyKanji(VOCABULARY, CURATED_KANJI);
 
 export const DECORATIONS: GardenDecoration[] = [
   { id: 'house', name: 'Tea house', emoji: '🏠', price: 0, area: 'house' },

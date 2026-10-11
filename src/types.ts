@@ -17,6 +17,8 @@ export interface VocabularyItem {
   japanese: string;
   reading: string;
   romaji?: string;
+  pronounce?: string;
+  singleKanji?: 'yes' | 'no';
   meaning: string;
   partOfSpeech?: string;
   wordType?: string;
@@ -35,7 +37,7 @@ export interface VocabularyItem {
 export interface KanjiItem {
   id: string;
   character: string;
-  readings: { on?: string[]; kun?: string[] };
+  readings: { on?: string[]; kun?: string[]; other?: string[] };
   meanings: string[];
   exampleWords: { japanese: string; reading: string; meaning: string }[];
 }
@@ -118,12 +120,14 @@ export interface UserProgress {
 
 export interface StudyCard {
   id: string;
-  type: 'kana' | 'vocabulary';
+  type: 'kana' | 'vocabulary' | 'kanji';
   kanaScript?: KanaScript;
   front: string;
   reading: string;
   meaning: string;
   kanji?: string;
+  kanjiReadings?: { on?: string[]; kun?: string[] };
+  exampleWords?: KanjiItem['exampleWords'];
   exampleJapanese?: string;
   exampleMeaning?: string;
   audioRef?: string;

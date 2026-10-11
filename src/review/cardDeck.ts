@@ -1,4 +1,4 @@
-import type { StudyCard, VocabularyItem } from '../types';
+import type { KanjiItem, StudyCard, VocabularyItem } from '../types';
 
 export const SESSION_CARD_LIMIT = 10;
 
@@ -24,6 +24,18 @@ export function includeDiscoveredWords(
     }));
 
   return [...cards, ...discoveredCards];
+}
+
+export function createKanjiStudyCards(kanji: KanjiItem[]): StudyCard[] {
+  return kanji.map((item) => ({
+    id: item.id,
+    type: 'kanji',
+    front: item.character,
+    reading: [...(item.readings.on ?? []), ...(item.readings.kun ?? []), ...(item.readings.other ?? [])].join('・'),
+    meaning: item.meanings.join('; '),
+    kanjiReadings: item.readings,
+    exampleWords: item.exampleWords,
+  }));
 }
 
 export function getNewWordHuntWords(

@@ -31,6 +31,7 @@ import {
 } from './src/game/wordHunt';
 import { isDue, localDateKey } from './src/review/scheduling';
 import {
+  createKanjiStudyCards,
   getNewWordHuntWords,
   includeDiscoveredWords,
   selectStudySessionCards,
@@ -43,7 +44,7 @@ import { KanaScript, ReviewRating, Story, StudyCard, VocabularyItem } from './sr
 
 export type Section = 'home' | 'game' | 'cards' | 'stories' | 'garden' | 'progress' | 'more';
 type CardCategory = 'Due' | 'New' | 'Relearn' | 'Difficult' | 'All';
-type CardDeck = 'Main deck' | 'Word Hunt' | 'Kana';
+type CardDeck = 'Main deck' | 'Word Hunt' | 'Kana' | 'Kanji';
 type CardDirection = 'meaning' | 'japanese' | 'reading';
 const WORD_HUNT_ROUND_SECONDS = 60;
 
@@ -445,13 +446,16 @@ export function FlashcardsScreen({
   const [successful, setSuccessful] = useState(0);
   const sessionStartedAt = useRef<number | null>(null);
   const mainDeckCards = includeDiscoveredWords(STUDY_CARDS, progress.wordHuntWords);
+  const kanjiCards = createKanjiStudyCards(INTRODUCTORY_KANJI);
   const deckCards: StudyCard[] = deck === 'Main deck'
     ? mainDeckCards
     : deck === 'Kana'
       ? STUDY_CARDS
         .filter((card) => card.type === 'kana')
         .map((card) => ({ ...card, meaning: card.reading }))
-      : progress.wordHuntWords.map((word) => ({
+      : deck === 'Kanji'
+        ? kanjiCards
+        : progress.wordHuntWords.map((word) => ({
       id: word.id,
       type: 'vocabulary',
       front: word.reading,
@@ -459,7 +463,7 @@ export function FlashcardsScreen({
       meaning: word.meaning,
     }));
   const cardById = useMemo(() => new Map(deckCards.map((card) => [card.id, card])), [deckCards]);
-  const questionCards = deck === 'Kana' || direction === 'meaning'
+  const questionCards = deck === 'Kana' || deck === 'Kanji' || direction === 'meaning'
     ? deckCards
     : deckCards.filter((card) => card.type === 'vocabulary');
   const due = questionCards.filter((card) => isDue(progress.reviews[card.id])).length;
@@ -483,7 +487,7 @@ export function FlashcardsScreen({
   const expectedAnswer: string | string[] = !currentCard ? '' : activeDirection === 'meaning'
     ? currentCard.meaning.split(';').map((part) => part.trim())
     : activeDirection === 'reading'
-      ? currentCard.reading
+      ? currentCard.type === 'kanji' ? currentCard.reading.split('・') : currentCard.reading
       : currentCard.front;
   const expectsJapanese = activeDirection !== 'meaning';
 
@@ -547,7 +551,7 @@ export function FlashcardsScreen({
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <ScreenTitle eyebrow="GENTLE REVIEW" title="Flashcards" subtitle="Small steps today make memories that stay." />
       <View style={styles.deckSelector}>
-        {(['Main deck', 'Word Hunt', 'Kana'] as CardDeck[]).map((item) => (
+        {(['Main deck', 'Word Hunt', 'Kana', 'Kanji'] as CardDeck[]).map((item) => (
           <Pressable
             key={item}
             onPress={() => {
@@ -561,6 +565,7 @@ export function FlashcardsScreen({
             <Text style={[styles.deckOptionText, deck === item && styles.deckOptionTextActive]}>
               {item === 'Word Hunt' ? `Word Hunt · ${progress.wordHuntWords.length}`
                 : item === 'Kana' ? `Kana · ${HIRAGANA.length + KATAKANA.length}`
+                  : item === 'Kanji' ? `Kanji · ${kanjiCards.length}`
                   : `Main deck · ${mainDeckCards.length}`}
             </Text>
           </Pressable>
@@ -588,6 +593,33 @@ export function FlashcardsScreen({
           ))}
         </View>
       ) : null}
+      {deck === 'Kanji' && !sessionActive ? (
+        <View style={styles.kanaOverview}>
+          <Text style={styles.noteTitle}>Kanji overview</Text>
+          <Text style={styles.sectionHelper}>Learn each character on its own, then notice it in example words.</Text>
+          {INTRODUCTORY_KANJI.map((item) => (
+            <View key={item.id} style={styles.kanjiOverviewRow}>
+              <Text style={styles.kanjiOverviewCharacter}>{item.character}</Text>
+              <View style={styles.kanjiOverviewCopy}>
+                <Text style={styles.kanjiOverviewMeaning}>{item.meanings.join(', ')}</Text>
+                <Text style={styles.sectionHelper}>
+                  On: {item.readings.on?.join('、') ?? '—'} · Kun: {item.readings.kun?.join('、') ?? '—'}
+                </Text>
+                {item.readings.other?.length ? (
+                  <Text style={styles.sectionHelper}>
+                    Vocabulary readings: {item.readings.other.join('、')}
+                  </Text>
+                ) : null}
+                {item.exampleWords.map((word) => (
+                  <Text key={`${item.id}-${word.japanese}`} style={styles.kanjiOverviewExample}>
+                    {word.japanese} · {word.reading} · {word.meaning}
+                  </Text>
+                ))}
+              </View>
+            </View>
+          ))}
+        </View>
+      ) : null}
       <View style={styles.categoryRow}>
         {(['Due', 'New', 'Relearn', 'Difficult', 'All'] as CardCategory[]).map((item) => {
           const count = item === 'Due' ? due : item === 'New' ? fresh
@@ -605,9 +637,9 @@ export function FlashcardsScreen({
           <Text style={styles.noteTitle}>Question type</Text>
           <View style={styles.directionRow}>
             {([
-              ['meaning', 'Japanese → English'],
-              ['japanese', 'English → Japanese'],
-              ['reading', 'Reading'],
+              ['meaning', deck === 'Kanji' ? 'Kanji → meaning' : 'Japanese → English'],
+              ['japanese', deck === 'Kanji' ? 'Meaning → kanji' : 'English → Japanese'],
+              ['reading', deck === 'Kanji' ? 'Kanji → reading' : 'Reading'],
             ] as [CardDirection, string][]).map(([item, label]) => (
               <Pressable
                 accessibilityRole="button"
@@ -644,14 +676,18 @@ export function FlashcardsScreen({
           <ProgressBar value={answered} maximum={Math.max(sessionTotal, 1)} />
           <View style={styles.flashcard}>
             <Text style={styles.cardType}>
-              {deck === 'Word Hunt' ? 'WORD HUNT' : currentCard.type === 'kana' ? currentCard.kanaScript?.toUpperCase() : 'EVERYDAY JAPANESE'}
+              {deck === 'Word Hunt' ? 'WORD HUNT'
+                : currentCard.type === 'kana' ? currentCard.kanaScript?.toUpperCase()
+                  : currentCard.type === 'kanji' ? 'KANJI' : 'EVERYDAY JAPANESE'}
             </Text>
             <Text style={[styles.flashFront, activeDirection === 'japanese' && styles.englishPrompt]}>{question}</Text>
             <Text style={styles.sectionHelper}>
               {currentCard.type === 'kana' ? 'Type the sound in romaji'
                 : activeDirection === 'meaning' ? 'What does this mean?'
-                  : activeDirection === 'japanese' ? 'Type the Japanese word in kana'
-                    : 'Type its reading in kana'}
+                  : activeDirection === 'japanese' ? currentCard.type === 'kanji' ? 'Type the kanji character'
+                    : 'Type the Japanese word in kana'
+                    : currentCard.type === 'kanji' ? 'Type one of its readings in hiragana'
+                      : 'Type its reading in kana'}
             </Text>
             {!revealed ? (
               <>
@@ -687,7 +723,17 @@ export function FlashcardsScreen({
                   </Text>
                 ) : null}
                 <Text style={styles.flashReading}>{currentCard.reading}</Text>
+                {currentCard.kanjiReadings ? (
+                  <Text style={styles.sectionHelper}>
+                    On: {currentCard.kanjiReadings.on?.join('、') ?? '—'} · Kun: {currentCard.kanjiReadings.kun?.join('、') ?? '—'}
+                  </Text>
+                ) : null}
                 <Text style={styles.flashMeaning}>{currentCard.meaning}</Text>
+                {currentCard.exampleWords?.map((word) => (
+                  <Text key={`${currentCard.id}-${word.japanese}`} style={styles.kanjiOverviewExample}>
+                    {word.japanese} · {word.reading} · {word.meaning}
+                  </Text>
+                ))}
                 {currentCard.exampleJapanese ? <Text style={styles.exampleText}>{currentCard.exampleJapanese}{currentCard.exampleMeaning ? `\n${currentCard.exampleMeaning}` : ''}</Text> : null}
               </>
             ) : (
@@ -1119,6 +1165,11 @@ const styles = StyleSheet.create({
   kanaOverviewItem: { width: '18%', minHeight: 53, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F8F2F9', borderRadius: 10 },
   kanaOverviewCharacter: { color: COLORS.navy, fontSize: 20, fontWeight: '700' },
   kanaOverviewReading: { color: COLORS.muted, fontSize: 9, fontWeight: '700' },
+  kanjiOverviewRow: { flexDirection: 'row', gap: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F5EFEC' },
+  kanjiOverviewCharacter: { color: COLORS.navy, fontSize: 36, fontWeight: '700', width: 44, textAlign: 'center' },
+  kanjiOverviewCopy: { flex: 1, justifyContent: 'center', gap: 3 },
+  kanjiOverviewMeaning: { color: COLORS.navy, fontSize: 13, fontWeight: '800' },
+  kanjiOverviewExample: { color: COLORS.muted, fontSize: 11, textAlign: 'center', marginTop: 4 },
   categoryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 17 },
   categoryChip: { flexGrow: 1, flexBasis: '28%', minWidth: 80, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6, paddingVertical: 10, backgroundColor: '#FFFFFF', borderRadius: 14, borderWidth: 1, borderColor: COLORS.border },
   categoryChipActive: { backgroundColor: COLORS.pink, borderColor: COLORS.pink },

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { A1_VOCABULARY } from '../src/content/a1Vocabulary.ts';
+import { createVocabularyKanji } from '../src/content/kanjiVocabulary.ts';
 import { checkAnswer } from '../src/review/answerChecking.ts';
 import {
+  createKanjiStudyCards,
   getNewWordHuntWords,
   includeDiscoveredWords,
   selectStudySessionCards,
@@ -74,6 +77,50 @@ test('every flashcard category session selector is capped at 10 cards', () => {
     selectStudySessionCards(cards, true),
     cards.slice(0, 10).map((card) => card.id),
   );
+});
+
+test('kanji flashcards teach single characters and link readings to example words', () => {
+  const cards = createKanjiStudyCards([{
+    id: 'kanji-book',
+    character: '本',
+    readings: { on: ['ほん'], kun: ['もと'] },
+    meanings: ['book', 'origin'],
+    exampleWords: [
+      { japanese: '本', reading: 'ほん', meaning: 'book' },
+      { japanese: '日本', reading: 'にほん', meaning: 'Japan' },
+    ],
+  }]);
+
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].type, 'kanji');
+  assert.equal(cards[0].front, '本');
+  assert.equal(cards[0].reading, 'ほん・もと');
+  assert.deepEqual(cards[0].meaning, 'book; origin');
+  assert.equal(cards[0].exampleWords[1].reading, 'にほん');
+});
+
+test('kanji deck includes every distinct kanji tagged in A1 vocabulary', () => {
+  const kanji = createVocabularyKanji(A1_VOCABULARY);
+  const cards = createKanjiStudyCards(kanji);
+  const taggedCharacters = new Set(
+    A1_VOCABULARY
+      .filter((word) => word.singleKanji === 'yes')
+      .flatMap((word) => [...word.japanese].filter((character) => /[\u4e00-\u9fff々〆ヵヶ]/u.test(character))),
+  );
+  const cardsByCharacter = new Map(cards.map((card) => [card.front, card]));
+
+  assert.deepEqual(
+    [...taggedCharacters].filter((character) => !cardsByCharacter.has(character)),
+    [],
+  );
+  assert.equal(new Set(cards.map((card) => card.front)).size, cards.length);
+
+  const flower = cardsByCharacter.get('花');
+  assert.ok(flower);
+  assert.equal(flower.type, 'kanji');
+  assert.ok(flower.reading.split('・').includes('はな'));
+  assert.ok(flower.meaning.includes('flower'));
+  assert.ok(flower.exampleWords.some((word) => word.japanese === '花' && word.reading === 'はな'));
 });
 
 test('learning ratings follow configurable short steps and graduate to review', () => {

@@ -936,6 +936,8 @@ export const A1_VOCABULARY: VocabularyItem[] = RAW_A1_VOCABULARY.map((word, inde
   ...word,
   id: `a1-${String(index + 1).padStart(4, '0')}`,
   romaji: kanaToRomaji(word.reading),
+  pronounce: kanaToRomaji(word.reading),
+  singleKanji: (word.japanese.match(/[\u4e00-\u9fff々〆ヵヶ]/g) ?? []).length === 1 ? 'yes' : 'no',
   wordType: word.partOfSpeech,
   tags: ['A1', 'N5-foundations', word.partOfSpeech],
 }));
