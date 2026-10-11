@@ -1,6 +1,6 @@
 import React from 'react';
-import { GardenScreen } from '../../../App';
 import { RouteFrame } from '../../components/RouteFrame';
+import { GardenScreen } from '../../features/garden/components/GardenScreen';
 import { useProgressStore } from '../../storage/ProgressContext';
 
 export default function GardenRoute() {
@@ -8,9 +8,8 @@ export default function GardenRoute() {
   return (
     <RouteFrame storageError={store.storageError}>
       <GardenScreen
-        petals={store.progress.petals}
-        ownedDecorationIds={store.progress.ownedDecorationIds}
-        buyDecoration={store.buyDecoration}
+        progress={store.progress}
+        onPurchase={store.purchaseGardenProduct}
       />
     </RouteFrame>
   );

@@ -19,7 +19,7 @@ Use the Expo CLI to open the app on iOS or Android. Run `npm run typecheck` and 
 - Review records, correctness history, scheduler state, and due timestamps persist locally. New-card sessions are unlimited; choose New to meet unseen cards, Relearn to practise previously introduced cards, or All for a randomly selected batch of up to 10 cards per session.
 - Progress includes learning/due counts, typed-answer outcomes, consecutive correct reviews, daily streak, completed-session study time, difficult-card revisits, and recent review history.
 - Three curated A1 stories with translation reveal, tappable vocabulary, and a clearly labelled audio placeholder.
-- A fixed-layout garden and small decoration shop; learning activities and completed stories award petals.
+- A progressive garden map, Tokyo restoration cycle, and fixed-layout decoration shop. Successful Kana Word Hunt rounds and successful flashcard sessions award petals; progress and purchases are saved locally.
 - Progress counts introduced items separately from mastered items. Mastery means at least three successful (non-Again) reviews.
 
 ## Structure
@@ -32,6 +32,7 @@ Use the Expo CLI to open the app on iOS or Android. Run `npm run typecheck` and 
 - `src/components/JapaneseKeyboard.tsx` provides the in-screen hiragana/katakana keyboard.
 - `src/storage/progressSerialization.ts` handles progress serialization for local persistence.
 - `src/storage/useProgress.ts` persists progress locally with AsyncStorage.
+- `src/features/garden/` contains garden purchase rules, the map, restoration scene, and shop UI.
 - `src/app/` contains the Expo Router root layout and six bottom-tab routes; `App.tsx` contains the reusable screen implementations.
 
 Progress is stored on the device under a versioned key. The current MVP does not sync accounts or provide cloud backup. No audio assets are bundled, so pronunciation and story listening are labelled as unavailable placeholders. The Word Hunt dictionary is assembled from the hand-curated beginner vocabulary and story words.

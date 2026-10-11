@@ -10,6 +10,7 @@ const tiles = [
   { title: 'Flashcards', emoji: '🗂️', subtitle: 'Review your deck', route: '/cards' },
   { title: 'Stories', emoji: '📖', subtitle: 'Read little lessons', route: '/stories' },
   { title: 'Garden', emoji: '🌸', subtitle: 'Decorate your home', route: '/garden' },
+  { title: 'Progress', emoji: '📊', subtitle: 'Track your learning journey', route: '/progress' },
 ];
 
 export default function MoreRoute() {
@@ -23,7 +24,7 @@ export default function MoreRoute() {
         <Panel style={styles.heroCard}>
           <Text style={styles.eyebrow}>YOUR WORLD</Text>
           <Text style={styles.header}>Little things that grow your day</Text>
-          <Text style={styles.subtitle}>{progress.petals} petals saved for your garden</Text>
+          <Text style={styles.subtitle}>{progress.petalCount} petals saved for your garden</Text>
         </Panel>
         {tiles.map((item) => (
           <Pressable key={item.title} onPress={() => router.push(item.route as any)} style={({ pressed }) => [styles.tile, pressed && styles.pressed]}>

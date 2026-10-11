@@ -165,7 +165,7 @@ test('review history and scheduling state survive serialization', () => {
     reviews: { 'v-water': scheduleReview(undefined, 'good', new Date('2026-01-01T00:00:00.000Z')) },
     reviewHistory: [{ cardId: 'v-water', reviewedAt: '2026-01-01T00:00:00.000Z', rating: 'good', answerCorrect: true, answer: 'water' }],
     wordHuntWords: [],
-    petals: 5,
+    petalCount: 5,
     ownedDecorationIds: [],
     gardenPurchases: [],
     storiesCompleted: [],
@@ -176,5 +176,5 @@ test('review history and scheduling state survive serialization', () => {
   const reopened = parseProgress(serializeProgress(progress));
   assert.deepEqual(reopened, progress);
   assert.equal(isUserProgress(reopened), true);
-  assert.equal(isUserProgress({ ...progress, petals: -1 }), false);
+  assert.equal(isUserProgress({ ...progress, petalCount: -1 }), false);
 });

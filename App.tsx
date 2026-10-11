@@ -13,7 +13,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { IdeaButton } from './src/components/DesignSystem';
 import { JapaneseKeyboard } from './src/components/JapaneseKeyboard';
 import {
-  DECORATIONS,
   HIRAGANA,
   INTRODUCTORY_KANJI,
   KATAKANA,
@@ -177,7 +176,7 @@ export function HomeScreen({
         <QuickLink emoji="🔎" title="Kana Word Hunt" detail="Find & learn" color={COLORS.pinkLight} onPress={() => onNavigate('game')} />
         <QuickLink emoji="🗂️" title="Flashcards" detail={`${due} due today`} color={COLORS.lavender} onPress={() => onNavigate('cards')} />
         <QuickLink emoji="📖" title="Stories" detail="Read something lovely" color="#F8EFDA" onPress={() => onNavigate('stories')} />
-        <QuickLink emoji="🌿" title="My Garden" detail={`${progress.petals} petals`} color={COLORS.greenLight} onPress={() => onNavigate('garden')} />
+        <QuickLink emoji="🌿" title="My Garden" detail={`${progress.petalCount} petals`} color={COLORS.greenLight} onPress={() => onNavigate('garden')} />
       </View>
 
       <SectionHeading title="A peek at your garden" helper="Your learning makes it bloom" />
@@ -542,7 +541,7 @@ export function FlashcardsScreen({
       const studyTimeSeconds = sessionStartedAt.current === null
         ? 0
         : Math.floor((Date.now() - sessionStartedAt.current) / 1000);
-      awardActivity(3, undefined, studyTimeSeconds);
+      awardActivity(nextSuccessful > 0 ? 3 : 0, undefined, studyTimeSeconds);
       sessionStartedAt.current = null;
     }
   };
@@ -768,7 +767,10 @@ export function FlashcardsScreen({
         <View style={styles.successCard}>
           <Text style={styles.successEmoji}>🍵</Text>
           <Text style={styles.successTitle}>Session complete</Text>
-          <Text style={styles.bodyText}>{successful} successful review{successful === 1 ? '' : 's'} recorded. You earned 3 petals for finishing the session.</Text>
+          <Text style={styles.bodyText}>
+            {successful} successful review{successful === 1 ? '' : 's'} recorded.
+            {successful > 0 ? ' You earned 3 petals for your successful session.' : ' Earn petals by getting at least one card right in your next session.'}
+          </Text>
           <SecondaryButton title="Start another session" onPress={startSession} />
         </View>
       ) : (
@@ -854,7 +856,7 @@ export function StoriesScreen({
           ))}
         </View>
         <PrimaryButton
-          title={completed ? 'Story completed ✓' : 'Mark story complete · earn 2 petals'}
+          title={completed ? 'Story completed ✓' : 'Mark story complete'}
           disabled={completed}
           onPress={() => completeStory(selectedStory.id)}
         />
@@ -879,66 +881,6 @@ export function StoriesScreen({
         </Pressable>
       ))}
       <Text style={styles.sessionNote}>Stories are hand-curated for A1 learners. Audio is not included yet.</Text>
-    </ScrollView>
-  );
-}
-
-export function GardenScreen({
-  petals,
-  ownedDecorationIds,
-  buyDecoration,
-}: {
-  petals: number;
-  ownedDecorationIds: string[];
-  buyDecoration: (decorationId: string) => void;
-}) {
-  const gardenItems = DECORATIONS.filter((item) => ownedDecorationIds.includes(item.id));
-  return (
-    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <View style={styles.gardenHeading}>
-        <View>
-          <Text style={styles.eyebrow}>YOUR LITTLE RETREAT</Text>
-          <Text style={styles.title}>My Garden</Text>
-        </View>
-        <View style={styles.petalsPill}><Text style={styles.petalsText}>🌸 {petals}</Text></View>
-      </View>
-      <View style={styles.gardenCanvas}>
-        <Text style={styles.gardenSun}>☀️</Text>
-        <Text style={styles.gardenCloudLeft}>☁️</Text>
-        <View style={styles.gardenBackPlants}><Text>🎋</Text><Text>🌿</Text><Text>🎋</Text></View>
-        <View style={styles.gardenGround} />
-        <View style={styles.gardenSceneItems}>
-          {gardenItems.map((item) => (
-            <View key={item.id} style={[styles.gardenObject, item.area === 'house' && styles.gardenObjectHouse]}>
-              <Text style={styles.gardenObjectEmoji}>{item.emoji}</Text>
-              <Text style={styles.gardenObjectName}>{item.name}</Text>
-            </View>
-          ))}
-        </View>
-        <Text style={styles.gardenGrass}>🌱　🌷　🌱　🌼　🌱</Text>
-      </View>
-      <View style={styles.gardenWelcome}>
-        <Text style={styles.gardenWelcomeTitle}>A garden that grows with you</Text>
-        <Text style={styles.bodyText}>Earn petals by learning, finishing stories, and completing game levels. Spend them on new garden friends.</Text>
-      </View>
-      <SectionHeading title="Garden shop" helper="A few little treasures to collect" />
-      {DECORATIONS.filter((item) => item.price > 0).map((item) => {
-        const owned = ownedDecorationIds.includes(item.id);
-        return (
-          <View key={item.id} style={styles.shopRow}>
-            <Text style={styles.shopEmoji}>{item.emoji}</Text>
-            <View style={styles.shopCopy}>
-              <Text style={styles.shopName}>{item.name}</Text>
-              <Text style={styles.shopPrice}>{owned ? 'Already in your garden' : `🌸 ${item.price} petals`}</Text>
-            </View>
-            <SecondaryButton
-              title={owned ? 'Owned' : 'Add'}
-              disabled={owned || petals < item.price}
-              onPress={() => buyDecoration(item.id)}
-            />
-          </View>
-        );
-      })}
     </ScrollView>
   );
 }
@@ -1240,27 +1182,6 @@ const styles = StyleSheet.create({
   vocabularyJapanese: { color: COLORS.navy, fontSize: 13, fontWeight: '800', minWidth: 78 },
   vocabularyReading: { color: COLORS.sage, fontSize: 10, minWidth: 85 },
   vocabularyMeaning: { color: COLORS.muted, fontSize: 10, flex: 1 },
-  gardenHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 },
-  petalsPill: { backgroundColor: '#F9E2E9', borderRadius: 16, paddingVertical: 9, paddingHorizontal: 13, borderWidth: 1, borderColor: '#F0C4D1' },
-  petalsText: { color: '#8C4C65', fontSize: 13, fontWeight: '800' },
-  gardenCanvas: { height: 255, backgroundColor: '#DDEEE7', borderRadius: 24, overflow: 'hidden', position: 'relative', marginBottom: 15, borderWidth: 1, borderColor: '#CFE6D9' },
-  gardenSun: { position: 'absolute', top: 15, right: 19, fontSize: 25 },
-  gardenCloudLeft: { position: 'absolute', top: 28, left: 18, fontSize: 22 },
-  gardenBackPlants: { position: 'absolute', top: 81, left: 0, right: 0, flexDirection: 'row', justifyContent: 'space-around', fontSize: 27 },
-  gardenGround: { position: 'absolute', bottom: 0, height: 90, left: 0, right: 0, backgroundColor: '#BFDDB0' },
-  gardenSceneItems: { position: 'absolute', top: 87, left: 10, right: 10, height: 116, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'flex-end' },
-  gardenObject: { alignItems: 'center', maxWidth: 95 },
-  gardenObjectHouse: { transform: [{ translateY: 2 }] },
-  gardenObjectEmoji: { fontSize: 44 },
-  gardenObjectName: { color: COLORS.navy, fontSize: 9, fontWeight: '700', backgroundColor: '#FFFFFFC9', paddingHorizontal: 6, borderRadius: 8, marginTop: 3 },
-  gardenGrass: { position: 'absolute', bottom: 7, alignSelf: 'center', fontSize: 19 },
-  gardenWelcome: { padding: 15, backgroundColor: '#FFFFFF', borderRadius: 18, marginBottom: 19, borderWidth: 1, borderColor: COLORS.border },
-  gardenWelcomeTitle: { color: COLORS.navy, fontSize: 14, fontWeight: '800' },
-  shopRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 18, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: COLORS.border },
-  shopEmoji: { fontSize: 27, width: 43, textAlign: 'center' },
-  shopCopy: { flex: 1, marginLeft: 6 },
-  shopName: { color: COLORS.navy, fontSize: 12, fontWeight: '800' },
-  shopPrice: { color: COLORS.muted, fontSize: 10, marginTop: 3 },
   overallCard: { backgroundColor: '#FFFFFF', borderRadius: 22, padding: 17, marginBottom: 20, borderWidth: 1, borderColor: COLORS.border, shadowColor: COLORS.navy, shadowOpacity: 0.07, shadowRadius: 15, elevation: 3 },
   overallHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   overallCount: { color: COLORS.navy, fontSize: 30, fontWeight: '800', marginVertical: 2 },

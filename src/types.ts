@@ -80,14 +80,6 @@ export interface ReviewEvent {
   answer?: string;
 }
 
-export interface GardenDecoration {
-  id: string;
-  name: string;
-  emoji: string;
-  price: number;
-  area: 'garden' | 'house';
-}
-
 export interface GardenPurchase {
   decorationId: string;
   purchasedAt: string;
@@ -109,9 +101,11 @@ export interface UserProgress {
   reviews: Record<string, ReviewRecord>;
   reviewHistory: ReviewEvent[];
   wordHuntWords: VocabularyItem[];
-  petals: number;
+  petalCount: number;
   ownedDecorationIds: string[];
   gardenPurchases: GardenPurchase[];
+  restorationStatus?: number;
+  unlockedGardenLevels?: string[];
   storiesCompleted: string[];
   completedLevels: number;
   dailyGoal: number;

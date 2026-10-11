@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useState } from 'react';
-import { DECORATIONS } from '../content/beginner';
+import { purchaseGardenProduct as purchaseGardenProductForProgress } from '../features/garden/gardenDomain';
 import { defaultScheduler, localDateKey } from '../review/scheduling';
 import { isUserProgress, parseProgress, serializeProgress } from './progressSerialization';
 import { DailyActivity, ReviewRating, UserProgress, VocabularyItem } from '../types';
@@ -11,9 +11,11 @@ const INITIAL_PROGRESS: UserProgress = {
   reviews: {},
   reviewHistory: [],
   wordHuntWords: [],
-  petals: 5,
+  petalCount: 0,
   ownedDecorationIds: ['house', 'sakura'],
   gardenPurchases: [],
+  restorationStatus: 0,
+  unlockedGardenLevels: ['aomori', 'tokyo'],
   storiesCompleted: [],
   completedLevels: 0,
   dailyGoal: 5,
@@ -53,7 +55,14 @@ export function useProgress() {
         if (!mounted) return;
         if (stored) {
           const parsed = parseProgress(stored);
-          if (isUserProgress(parsed)) setProgress({ ...parsed, wordHuntWords: parsed.wordHuntWords ?? [] });
+          if (isUserProgress(parsed)) {
+            setProgress({
+              ...parsed,
+              wordHuntWords: parsed.wordHuntWords ?? [],
+              restorationStatus: parsed.restorationStatus ?? 0,
+              unlockedGardenLevels: parsed.unlockedGardenLevels ?? ['aomori', 'tokyo'],
+            });
+          }
           else throw new Error('Saved learning progress has an unsupported format.');
         }
         setCanPersist(true);
@@ -115,12 +124,15 @@ export function useProgress() {
     });
   }, []);
 
-  const awardActivity = useCallback((petals: number, level?: number, studyTimeSeconds = 0) => {
+  const awardActivity = useCallback((petalReward: number, level?: number, studyTimeSeconds = 0) => {
+    if (!Number.isInteger(petalReward) || petalReward < 0) {
+      throw new Error('Petal rewards must be a non-negative whole number.');
+    }
     setProgress((current) => {
       const today = localDateKey();
       return {
         ...current,
-        petals: current.petals + petals,
+        petalCount: current.petalCount + petalReward,
         completedLevels: level === undefined ? current.completedLevels : Math.max(current.completedLevels, level),
         dailyActivity: updateDailyActivity(current.dailyActivity, today, level === undefined
           ? { sessionsCompleted: 1, studyTimeSeconds: Math.max(0, Math.floor(studyTimeSeconds)) }
@@ -135,28 +147,25 @@ export function useProgress() {
       : {
           ...current,
           storiesCompleted: [...current.storiesCompleted, storyId],
-          petals: current.petals + 2,
           dailyActivity: updateDailyActivity(current.dailyActivity, localDateKey(), { storiesCompleted: 1 }),
         });
   }, []);
 
-  const buyDecoration = useCallback((decorationId: string): void => {
-    const decoration = DECORATIONS.find((item) => item.id === decorationId);
-    if (!decoration) return;
+  const purchaseGardenProduct = useCallback((productId: string): void => {
     setProgress((current) => {
-      if (current.ownedDecorationIds.includes(decorationId) || current.petals < decoration.price) return current;
-      return {
-        ...current,
-        petals: current.petals - decoration.price,
-        ownedDecorationIds: [...current.ownedDecorationIds, decorationId],
-        gardenPurchases: [...current.gardenPurchases, {
-          decorationId,
-          purchasedAt: new Date().toISOString(),
-          price: decoration.price,
-        }],
-      };
+      const result = purchaseGardenProductForProgress(current, productId);
+      return result.progress;
     });
   }, []);
 
-  return { progress, isLoaded, storageError, recordReview, addWordHuntWords, awardActivity, completeStory, buyDecoration };
+  return {
+    progress,
+    isLoaded,
+    storageError,
+    recordReview,
+    addWordHuntWords,
+    awardActivity,
+    completeStory,
+    purchaseGardenProduct,
+  };
 }

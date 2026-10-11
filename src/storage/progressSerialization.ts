@@ -10,7 +10,16 @@ export function serializeProgress(progress: UserProgress): string {
 }
 
 export function parseProgress(serialized: string): unknown {
-  return JSON.parse(serialized);
+  const parsed: unknown = JSON.parse(serialized);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return parsed;
+
+  const saved = parsed as Record<string, unknown>;
+  if (!('petals' in saved)) return parsed;
+  const { petals, ...currentFields } = saved;
+  return {
+    ...currentFields,
+    petalCount: saved.petalCount ?? petals,
+  };
 }
 
 export function isUserProgress(value: unknown): value is UserProgress {
@@ -25,9 +34,9 @@ export function isUserProgress(value: unknown): value is UserProgress {
     && (candidate.wordHuntWords === undefined
       || (Array.isArray(candidate.wordHuntWords) && candidate.wordHuntWords.every(isVocabularyItem)))
     && Object.values(candidate.reviews).every(isReviewRecord)
-    && typeof candidate.petals === 'number'
-    && Number.isFinite(candidate.petals)
-    && candidate.petals >= 0
+    && typeof candidate.petalCount === 'number'
+    && Number.isInteger(candidate.petalCount)
+    && candidate.petalCount >= 0
     && Array.isArray(candidate.ownedDecorationIds)
     && candidate.ownedDecorationIds.every((id) => typeof id === 'string')
     && Array.isArray(candidate.gardenPurchases)
@@ -38,6 +47,13 @@ export function isUserProgress(value: unknown): value is UserProgress {
       && Number.isFinite(purchase.price)
       && purchase.price >= 0,
     ))
+    && (candidate.restorationStatus === undefined
+      || (Number.isInteger(candidate.restorationStatus)
+        && candidate.restorationStatus >= 0
+        && candidate.restorationStatus <= 100))
+    && (candidate.unlockedGardenLevels === undefined
+      || (Array.isArray(candidate.unlockedGardenLevels)
+        && candidate.unlockedGardenLevels.every((level) => typeof level === 'string')))
     && Array.isArray(candidate.storiesCompleted)
     && candidate.storiesCompleted.every((storyId) => typeof storyId === 'string')
     && typeof candidate.completedLevels === 'number'

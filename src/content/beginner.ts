@@ -1,5 +1,4 @@
 import {
-  GardenDecoration,
   KanjiItem,
   KanaCharacter,
   Story,
@@ -198,15 +197,6 @@ const CURATED_KANJI: KanjiItem[] = [
 ];
 
 export const INTRODUCTORY_KANJI: KanjiItem[] = createVocabularyKanji(VOCABULARY, CURATED_KANJI);
-
-export const DECORATIONS: GardenDecoration[] = [
-  { id: 'house', name: 'Tea house', emoji: '🏠', price: 0, area: 'house' },
-  { id: 'sakura', name: 'Sakura tree', emoji: '🌸', price: 0, area: 'garden' },
-  { id: 'lantern', name: 'Stone lantern', emoji: '🏮', price: 8, area: 'garden' },
-  { id: 'pond', name: 'Little pond', emoji: '🪷', price: 12, area: 'garden' },
-  { id: 'bamboo', name: 'Bamboo', emoji: '🎋', price: 15, area: 'garden' },
-  { id: 'maneki', name: 'Lucky cat', emoji: '🐈', price: 20, area: 'house' },
-];
 
 export const STUDY_CARDS: StudyCard[] = [
   ...HIRAGANA.map((kana) => ({

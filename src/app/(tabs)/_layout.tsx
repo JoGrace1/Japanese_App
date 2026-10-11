@@ -8,7 +8,6 @@ const tabs = [
   { name: 'cards', title: 'Cards', emoji: '🗂️' },
   { name: 'stories', title: 'Stories', emoji: '📖' },
   { name: 'garden', title: 'Garden', emoji: '🌸' },
-  { name: 'progress', title: 'Progress', emoji: '📈' },
   { name: 'more', title: 'More', emoji: '☰' },
 ];
 
