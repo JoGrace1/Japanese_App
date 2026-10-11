@@ -30,6 +30,12 @@ import {
   WordHuntPosition,
 } from './src/game/wordHunt';
 import { isDue, localDateKey } from './src/review/scheduling';
+import {
+  getNewWordHuntWords,
+  includeDiscoveredWords,
+  selectStudySessionCards,
+  SESSION_CARD_LIMIT,
+} from './src/review/cardDeck';
 import { AnswerKind, checkAnswer } from './src/review/answerChecking';
 import { useProgress } from './src/storage/useProgress';
 import { TOKENS } from './src/theme';
@@ -42,7 +48,6 @@ type CardDirection = 'meaning' | 'japanese' | 'reading';
 const WORD_HUNT_ROUND_SECONDS = 60;
 
 const COLORS = TOKENS.colors;
-const ALL_SESSION_CARD_LIMIT = 10;
 
 function todayCount(progress: ReturnType<typeof useProgress>['progress']): number {
   return Object.values(progress.reviews).filter((review) => isDue(review)).length;
@@ -81,14 +86,7 @@ function chooseSessionCards(
       new Date(progress.reviews[left.id]?.dueAt ?? 0).getTime()
       - new Date(progress.reviews[right.id]?.dueAt ?? 0).getTime());
   }
-  if (category === 'All') {
-    for (let index = filtered.length - 1; index > 0; index -= 1) {
-      const swapIndex = Math.floor(Math.random() * (index + 1));
-      [filtered[index], filtered[swapIndex]] = [filtered[swapIndex], filtered[index]];
-    }
-    return filtered.slice(0, ALL_SESSION_CARD_LIMIT).map((card) => card.id);
-  }
-  return filtered.map((card) => card.id);
+  return selectStudySessionCards(filtered, category === 'Due');
 }
 
 export function LoadingScreen() {
@@ -298,11 +296,7 @@ export function GameScreen({
   const finishRound = () => {
     if (roundEnded.current) return;
     roundEnded.current = true;
-    const existingReadings = new Set([
-      ...STUDY_CARDS.map((card) => card.reading),
-      ...wordHuntWords.map((word) => word.reading),
-    ]);
-    const newWords = foundWords.filter((word) => !existingReadings.has(word.reading));
+    const newWords = getNewWordHuntWords(foundWords, wordHuntWords);
     saveWords(newWords);
     if (foundWords.length > 0) awardActivity(5);
     setSavedCount(newWords.length);
@@ -390,7 +384,8 @@ export function GameScreen({
           <Text style={styles.noteTitle}>Words found this round</Text>
           {foundWords.map((word) => (
             <View key={word.id} style={styles.foundWordLine}>
-              <Text style={styles.foundWordJapanese}>{word.japanese}</Text>
+              <Text style={styles.foundWordKanji}>{word.kanji ?? word.japanese}</Text>
+              <Text style={styles.foundWordReading}>{wordForScript(word.reading, script)}</Text>
               <Text style={styles.foundWordMeaning}>{word.meaning}</Text>
             </View>
           ))}
@@ -413,7 +408,8 @@ export function GameScreen({
             <Text style={styles.noteTitle}>Words you could have found · {possibleWords.length}</Text>
             {possibleWords.length ? possibleWords.map((word) => (
               <View key={word.id} style={styles.foundWordLine}>
-                <Text style={styles.foundWordJapanese}>{wordForScript(word.japanese, script)}</Text>
+                <Text style={styles.foundWordKanji}>{word.kanji ?? word.japanese}</Text>
+                <Text style={styles.foundWordReading}>{wordForScript(word.reading, script)}</Text>
                 <Text style={styles.foundWordMeaning}>{word.meaning}</Text>
               </View>
             )) : <Text style={styles.sectionHelper}>No other dictionary words were traceable on this board.</Text>}
@@ -448,14 +444,16 @@ export function FlashcardsScreen({
   const [answered, setAnswered] = useState(0);
   const [successful, setSuccessful] = useState(0);
   const sessionStartedAt = useRef<number | null>(null);
+  const mainDeckCards = includeDiscoveredWords(STUDY_CARDS, progress.wordHuntWords);
   const deckCards: StudyCard[] = deck === 'Main deck'
-    ? STUDY_CARDS
+    ? mainDeckCards
     : progress.wordHuntWords.map((word) => ({
       id: word.id,
       type: 'vocabulary',
       front: word.japanese,
       reading: word.reading,
       meaning: word.meaning,
+      kanji: word.kanji,
     }));
   const cardById = useMemo(() => new Map(deckCards.map((card) => [card.id, card])), [deckCards]);
   const questionCards = direction === 'meaning' ? deckCards : deckCards.filter((card) => card.type === 'vocabulary');
@@ -556,7 +554,7 @@ export function FlashcardsScreen({
             style={[styles.deckOption, deck === item && styles.deckOptionActive]}
           >
             <Text style={[styles.deckOptionText, deck === item && styles.deckOptionTextActive]}>
-              {item === 'Word Hunt' ? `Word Hunt · ${progress.wordHuntWords.length}` : item}
+              {item === 'Word Hunt' ? `Word Hunt · ${progress.wordHuntWords.length}` : `Main deck · ${mainDeckCards.length}`}
             </Text>
           </Pressable>
         ))}
@@ -704,11 +702,11 @@ export function FlashcardsScreen({
           <Text style={styles.sessionHeading}>{category} cards</Text>
           <Text style={styles.bodyText}>
             {deck === 'Word Hunt' && deckCards.length === 0 ? 'Words you discover in Kana Word Hunt will be collected here.'
-              : category === 'Due' ? `${due} card${due === 1 ? '' : 's'} are ready for a little review.`
-              : category === 'New' ? `${fresh} new cards are waiting. Study as many as you like.`
-                : category === 'Relearn' ? `${introduced} previously introduced cards are ready to practise again.`
-                : category === 'Difficult' ? `${difficult} cards have at least one lapse and are ready to revisit.`
-                  : `Study up to ${ALL_SESSION_CARD_LIMIT} randomly selected cards from the ${questionCards.length} available in this deck and question type.`}
+              : category === 'Due' ? `${due} card${due === 1 ? '' : 's'} are ready for review. Study up to ${SESSION_CARD_LIMIT} at a time.`
+              : category === 'New' ? `${fresh} new cards are waiting. Study up to ${SESSION_CARD_LIMIT} at a time.`
+                : category === 'Relearn' ? `${introduced} previously introduced cards are ready to practise. Study up to ${SESSION_CARD_LIMIT} at a time.`
+                : category === 'Difficult' ? `${difficult} difficult cards are ready to revisit. Study up to ${SESSION_CARD_LIMIT} at a time.`
+                  : `Study up to ${SESSION_CARD_LIMIT} randomly selected cards from the ${questionCards.length} available in this deck and question type.`}
           </Text>
           <Text style={styles.schedulingNote}>Again returns in 1 minute · learning steps are 1 and 10 minutes · Good graduates in about 1 day · Easy graduates in 4 days.</Text>
           <PrimaryButton title="Begin a study session" onPress={startSession} disabled={(category === 'Due' ? due : category === 'New' ? fresh : category === 'Relearn' ? introduced : category === 'Difficult' ? difficult : questionCards.length) === 0} />
@@ -1068,9 +1066,10 @@ const styles = StyleSheet.create({
   wordActionRow: { flexDirection: 'row', gap: 9, alignItems: 'center' },
   wordMessage: { color: COLORS.green, fontSize: 11, fontWeight: '700', textAlign: 'center', marginTop: 8 },
   foundWordsCard: { backgroundColor: '#FFFFFF', borderRadius: 18, padding: 14, marginTop: 14, borderWidth: 1, borderColor: COLORS.border },
-  foundWordLine: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: '#F5EFEC' },
-  foundWordJapanese: { color: COLORS.navy, fontSize: 14, fontWeight: '800', minWidth: 80 },
-  foundWordMeaning: { color: COLORS.muted, flex: 1, fontSize: 11 },
+  foundWordLine: { gap: 2, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F5EFEC' },
+  foundWordKanji: { color: COLORS.navy, fontSize: 15, fontWeight: '800' },
+  foundWordReading: { color: COLORS.green, fontSize: 12, fontWeight: '700' },
+  foundWordMeaning: { color: COLORS.muted, fontSize: 11 },
   successCard: { alignItems: 'center', backgroundColor: '#EAF7EE', borderRadius: 22, padding: 20, marginTop: 16, borderWidth: 1, borderColor: '#CFE9D6' },
   successEmoji: { fontSize: 38, marginBottom: 6 },
   successTitle: { color: COLORS.navy, fontSize: 21, fontWeight: '800' },

@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { checkAnswer } from '../src/review/answerChecking.ts';
+import {
+  getNewWordHuntWords,
+  includeDiscoveredWords,
+  selectStudySessionCards,
+} from '../src/review/cardDeck.ts';
 import { scheduleReview } from '../src/review/scheduling.ts';
 import { isUserProgress, parseProgress, serializeProgress } from '../src/storage/progressSerialization.ts';
 
@@ -14,6 +19,61 @@ test('reading answers enforce the requested kana script', () => {
   assert.equal(checkAnswer('みず', 'みず', { kind: 'reading', script: 'hiragana' }), true);
   assert.equal(checkAnswer('ミズ', 'ミズ', { kind: 'reading', script: 'hiragana' }), false);
   assert.equal(checkAnswer('ミズ', 'ミズ', { kind: 'reading', script: 'katakana' }), true);
+});
+
+test('discovered Word Hunt words are included in the main flashcard deck without duplicates', () => {
+  const baseCards = [{
+    id: 'v-water',
+    type: 'vocabulary',
+    front: '水',
+    reading: 'みず',
+    meaning: 'water',
+  }];
+  const discoveredWords = [
+    { id: 'wh-water', japanese: 'みず', reading: 'みず', meaning: 'water' },
+    { id: 'wh-mountain', japanese: 'やま', reading: 'やま', meaning: 'mountain' },
+  ];
+
+  const cards = includeDiscoveredWords(baseCards, discoveredWords);
+
+  assert.equal(cards.length, 2);
+  assert.deepEqual(cards[1], {
+    id: 'wh-mountain',
+    type: 'vocabulary',
+    front: 'やま',
+    reading: 'やま',
+    meaning: 'mountain',
+    kanji: undefined,
+    exampleJapanese: undefined,
+    exampleMeaning: undefined,
+    audioRef: undefined,
+  });
+});
+
+test('A1 words can be saved to the Word Hunt deck even when already in the main deck', () => {
+  const foundWords = [
+    { id: 'a1-hello', japanese: 'こんにちは', reading: 'こんにちは', meaning: 'hello' },
+    { id: 'a1-cat', japanese: 'ねこ', reading: 'ねこ', meaning: 'cat' },
+  ];
+  const savedWords = [{ id: 'a1-cat', japanese: 'ねこ', reading: 'ねこ', meaning: 'cat' }];
+
+  assert.deepEqual(getNewWordHuntWords(foundWords, savedWords), [foundWords[0]]);
+});
+
+test('every flashcard category session selector is capped at 10 cards', () => {
+  const cards = Array.from({ length: 20 }, (_, index) => ({
+    id: `card-${index}`,
+    type: 'vocabulary',
+    front: `word-${index}`,
+    reading: `reading-${index}`,
+    meaning: `meaning-${index}`,
+  }));
+
+  assert.equal(selectStudySessionCards(cards).length, 10);
+  assert.deepEqual(
+    selectStudySessionCards(cards, true),
+    cards.slice(0, 10).map((card) => card.id),
+  );
 });
 
 test('learning ratings follow configurable short steps and graduate to review', () => {

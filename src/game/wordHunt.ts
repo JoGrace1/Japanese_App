@@ -134,6 +134,7 @@ function createWordList(): VocabularyItem[] {
       japanese: word.japanese,
       reading,
       meaning: word.meaning,
+      kanji: 'kanji' in word && typeof word.kanji === 'string' ? word.kanji : undefined,
       partOfSpeech: 'partOfSpeech' in word && typeof word.partOfSpeech === 'string'
         ? word.partOfSpeech
         : undefined,
